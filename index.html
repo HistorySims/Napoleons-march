@@ -8,20 +8,84 @@
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0f;display:flex;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;overflow:hidden;font-family:'IM Fell English',serif}
-#wrap{position:relative;width:1000px;max-width:100vw;aspect-ratio:1000/560}
+body{background:#0a0a0f;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;overflow:hidden;font-family:'IM Fell English',serif}
+#wrap{position:relative;width:1000px;max-width:100vw;aspect-ratio:1000/560;flex-shrink:0}
 canvas{display:block;width:100%;height:100%;cursor:default}
-@media(max-width:768px){
-  #wrap{width:100vw;height:100vh;height:100dvh;max-width:none;aspect-ratio:auto}
-  body{align-items:stretch}
+
+/* Mobile deploy panel — sits below the canvas in the dead space */
+#mobile-deploy{
+  display:none;
+  width:100vw;
+  background:rgba(8,18,8,0.97);
+  border-top:1.5px solid #3a7a3a;
+  padding:10px 16px 14px;
+  flex-direction:column;
+  gap:8px;
+  flex-shrink:0;
 }
-@media(orientation:portrait) and (max-width:768px){
-  #wrap{width:100vw;height:56vw;margin:auto 0}
+#md-header{
+  display:flex;justify-content:space-between;align-items:center;
+  color:#aad4aa;font-family:'IM Fell English',serif;font-size:13px;
+}
+#md-controls{display:flex;align-items:center;gap:8px}
+.md-btn{
+  background:#1a2a1a;border:1.5px solid #3a7a3a;color:#ccffcc;
+  font-family:Cinzel,serif;font-size:16px;font-weight:bold;
+  width:38px;height:38px;border-radius:6px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+}
+.md-btn:active{background:#2a4a2a}
+.md-btn:disabled{background:#111;border-color:#333;color:#444}
+#md-count{
+  background:#111;border:1px solid #333;color:#fff;
+  font-family:Cinzel,serif;font-size:16px;font-weight:bold;
+  width:52px;height:38px;border-radius:4px;
+  display:flex;align-items:center;justify-content:center;
+  letter-spacing:1px;
+}
+#md-send{
+  flex:1;height:38px;background:#1a4a1a;border:1.5px solid #3a8a3a;
+  color:#ccffcc;font-family:Cinzel,serif;font-size:13px;font-weight:bold;
+  border-radius:6px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+}
+#md-send:active{background:#2a6a2a}
+#md-send:disabled{background:#111;border-color:#333;color:#444}
+#md-in-battle{
+  display:none;align-items:center;gap:10px;
+  color:#aaffaa;font-family:Cinzel,serif;font-size:13px;
+}
+#md-in-battle-label{flex:1}
+
+@media(max-width:768px){
+  #wrap{width:100vw;max-width:none;aspect-ratio:1000/560;height:auto}
+  body{justify-content:flex-start;align-items:stretch}
+  #mobile-deploy{display:flex}
 }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
+<div id="mobile-deploy">
+  <!-- Shown when NOT inBattle -->
+  <div id="md-idle">
+    <div id="md-header">
+      <span>Russian Reserve: <strong id="md-bank">50</strong></span>
+      <span style="color:#666;font-size:11px">Add soldiers, then deploy</span>
+    </div>
+    <div id="md-controls">
+      <button class="md-btn" id="md-minus">−</button>
+      <div id="md-count">0</div>
+      <button class="md-btn" id="md-plus">+</button>
+      <button id="md-send">&#x2694; Send into Battle</button>
+    </div>
+  </div>
+  <!-- Shown when inBattle -->
+  <div id="md-in-battle">
+    <span id="md-in-battle-label">&#x2694; In Battle — WASD + Space to fight</span>
+  </div>
+</div>
 <script>
 'use strict';
 
@@ -98,6 +162,37 @@ let dragFromBank = false;
 const isMobile = 'ontouchstart' in window;
 const touch = { jx:0, jy:0, jActive:false, jSX:0, jSY:0, attack:false, atkId:-1, jId:-1 };
 const JR=48, JCX=75, JCY=H-85, ACX=W-75, ACY=H-85, AR=46;
+
+// -- MOBILE DEPLOY PANEL --
+const mdBank    = document.getElementById('md-bank');
+const mdCount   = document.getElementById('md-count');
+const mdMinus   = document.getElementById('md-minus');
+const mdPlus    = document.getElementById('md-plus');
+const mdSend    = document.getElementById('md-send');
+const mdIdle    = document.getElementById('md-idle');
+const mdBattle  = document.getElementById('md-in-battle');
+
+function syncMobilePanel(){
+  if(!isMobile) return;
+  if(mdBank)  mdBank.textContent  = russia.bank;
+  if(mdCount) mdCount.textContent = russia.pendingSoldiers;
+  if(mdMinus) mdMinus.disabled = russia.pendingSoldiers <= 0;
+  if(mdPlus)  mdPlus.disabled  = russia.bank <= 0;
+  if(mdSend)  mdSend.disabled  = russia.pendingSoldiers <= 0;
+  const inBattle = russia.inBattle;
+  if(mdIdle)   mdIdle.style.display   = inBattle ? 'none'  : 'block';
+  if(mdBattle) mdBattle.style.display = inBattle ? 'flex'  : 'none';
+}
+
+if(mdMinus) mdMinus.addEventListener('click', () => {
+  if(russia.pendingSoldiers > 0){ russia.pendingSoldiers--; russia.bank++; syncMobilePanel(); }
+});
+if(mdPlus) mdPlus.addEventListener('click', () => {
+  if(russia.bank > 0){ russia.pendingSoldiers++; russia.bank--; syncMobilePanel(); }
+});
+if(mdSend) mdSend.addEventListener('click', () => {
+  if(russia.pendingSoldiers > 0 && (phase==='playing'||phase==='retreat')){ sendIntoBattle(); syncMobilePanel(); }
+});
 
 // Effects
 let effects = [];
@@ -329,8 +424,8 @@ phase = 'napoleon_wins';
 return;
 }
 
-// Deploy box buttons
-if((phase==='playing' || phase==='retreat') && !russia.inBattle){
+// Deploy box buttons (desktop only — mobile uses HTML panel)
+if(!isMobile && (phase==='playing' || phase==='retreat') && !russia.inBattle){
 // Minus
 if(mx >= BTN_MINUS.x && mx <= BTN_MINUS.x+BTN_MINUS.w && my >= BTN_MINUS.y && my <= BTN_MINUS.y+BTN_MINUS.h){
 if(russia.pendingSoldiers > 0){ russia.pendingSoldiers--; russia.bank++; }
@@ -463,6 +558,7 @@ if(p.life<=0) particles.splice(i,1);
 
 if(phase==='playing') updatePlaying(dt);
 else if(phase==='retreat') updateRetreat(dt);
+syncMobilePanel();
 }
 
 function updatePlaying(dt){
@@ -1690,13 +1786,12 @@ if(napoleon.atMoscow && phase==='playing'){
 drawMoscowChoice();
 }
 
-// inBattle indicator
-if(russia.inBattle){
+// inBattle indicator (desktop only — mobile panel handles this)
+if(!isMobile && russia.inBattle){
 ctx.fillStyle='rgba(0,80,0,0.55)';
 ctx.beginPath(); ctx.roundRect(8,H-36,180,28,6); ctx.fill();
 ctx.fillStyle='#aaffaa'; ctx.font='bold 11px Cinzel, serif'; ctx.textAlign='left';
-const cIdx = russia.controlledIdx;
-ctx.fillText(`⚔ In Battle  WASD+SPACE`, 16, H-17);
+ctx.fillText('⚔ In Battle  WASD+SPACE', 16, H-17);
 }
 
 // Mobile virtual controls
@@ -1727,6 +1822,7 @@ const BTN_PLUS  = { x:108, y:H-68, w:30, h:28 };
 const BTN_SEND  = { x:18, y:H-34, w:200, h:26 };
 
 function drawDeployBox(){
+if(isMobile) return; // handled by HTML panel on mobile
 if(russia.inBattle) return; // Hide when in battle
 // Panel
 ctx.fillStyle='rgba(10,20,10,0.82)';
