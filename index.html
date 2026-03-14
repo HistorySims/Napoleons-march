@@ -26,39 +26,39 @@ canvas{display:block;width:100%;height:100%;cursor:default}
 'use strict';
 
 const W=1000, H=560;
-const canvas=document.getElementById(‘c’);
-const ctx=canvas.getContext(‘2d’);
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
 canvas.width=W; canvas.height=H;
 
-// ── GAME CONSTANTS ──
+// -- GAME CONSTANTS --
 const MAP_WIDTH = 12000;
 const MOSCOW_X = MAP_WIDTH - 400;
 const GROUND_Y = 340;
 const LANE_TOP = 300, LANE_BOT = 440;
 const DEPLOY_ZONE_X = 150;
 
-// ── COLORS ──
+// -- COLORS --
 const COL = {
-sky1:’#b8c6d4’, sky2:’#8a9bb0’, sky3:’#5a6a7a’,
-ground:’#8a9a6a’, groundWinter:’#c8c8d0’,
-snow:’#e8e8f0’, road:’#6a6050’, roadSnow:’#9a9a9f’,
-russian:’#1a5a2a’, russianLight:’#2a7a3a’,
-french:’#1a2a6a’, frenchLight:’#2a3a8a’,
-gold:’#c4a020’, blood:’#8a1a1a’,
-fire:’#e85020’, fireGlow:’#ff8040’,
-ice:’#4a8aff’, sick:’#4a8a2a’,
-wood:’#5a4030’, water:’#3a5a8a’, waterLight:’#5a8aba’,
-farm:’#aa8a50’, wheat:’#c8a830’,
+sky1:'#b8c6d4', sky2:'#8a9bb0', sky3:'#5a6a7a',
+ground:'#8a9a6a', groundWinter:'#c8c8d0',
+snow:'#e8e8f0', road:'#6a6050', roadSnow:'#9a9a9f',
+russian:'#1a5a2a', russianLight:'#2a7a3a',
+french:'#1a2a6a', frenchLight:'#2a3a8a',
+gold:'#c4a020', blood:'#8a1a1a',
+fire:'#e85020', fireGlow:'#ff8040',
+ice:'#4a8aff', sick:'#4a8a2a',
+wood:'#5a4030', water:'#3a5a8a', waterLight:'#5a8aba',
+farm:'#aa8a50', wheat:'#c8a830',
 };
 
-// ── GAME STATE ──
-let phase = ‘title’; // title | playing | burned | napoleon_wins | retreat | gameover_win | gameover_lose
+// -- GAME STATE --
+let phase = 'title'; // title | playing | burned | napoleon_wins | retreat | gameover_win | gameover_lose
 let camera = { x: 0 };
 let temperature = 15; // Celsius, drops as Napoleon approaches Moscow and during retreat
 let gameTime = 0;
 let retreatTime = 0;
 
-// Napoleon’s army
+// Napoleon's army
 let napoleon = {
 x: 200, y: GROUND_Y + 40,
 soldiers: [],
@@ -95,7 +95,7 @@ let mapFeatures = [];
 let keys = {};
 let mouse = { x:0, y:0, down:false };
 let dragFromBank = false;
-const isMobile = ‘ontouchstart’ in window;
+const isMobile = 'ontouchstart' in window;
 const touch = { jx:0, jy:0, jActive:false, jSX:0, jSY:0, attack:false, atkId:-1, jId:-1 };
 const JR=48, JCX=75, JCY=H-85, ACX=W-75, ACY=H-85, AR=46;
 
@@ -104,36 +104,36 @@ let effects = [];
 let particles = [];
 let messages = [];
 
-// ── INPUT ──
-window.addEventListener(‘keydown’, e => { keys[e.code]=true; });
-window.addEventListener(‘keyup’, e => { keys[e.code]=false; });
+// -- INPUT --
+window.addEventListener('keydown', e => { keys[e.code]=true; });
+window.addEventListener('keyup', e => { keys[e.code]=false; });
 
 function toCanvas(cx,cy){
 const r=canvas.getBoundingClientRect();
 return [(cx-r.left)*(W/r.width),(cy-r.top)*(H/r.height)];
 }
 
-canvas.addEventListener(‘mousedown’, e => {
+canvas.addEventListener('mousedown', e => {
 const [mx,my]=toCanvas(e.clientX,e.clientY);
 mouse.x=mx; mouse.y=my; mouse.down=true;
 handleMouseDown(mx,my);
 });
-canvas.addEventListener(‘mousemove’, e => {
+canvas.addEventListener('mousemove', e => {
 const [mx,my]=toCanvas(e.clientX,e.clientY);
 mouse.x=mx; mouse.y=my;
 });
-canvas.addEventListener(‘mouseup’, e => {
+canvas.addEventListener('mouseup', e => {
 const [mx,my]=toCanvas(e.clientX,e.clientY);
 mouse.down=false;
 handleMouseUp(mx,my);
 });
-canvas.addEventListener(‘click’, e => {
+canvas.addEventListener('click', e => {
 const [mx,my]=toCanvas(e.clientX,e.clientY);
 handleClick(mx,my);
 });
 
-// Touch support — multi-touch for joystick, attack, and deploy drag
-canvas.addEventListener(‘touchstart’, e => {
+// Touch support  - multi-touch for joystick, attack, and deploy drag
+canvas.addEventListener('touchstart', e => {
 e.preventDefault();
 for(const t of e.changedTouches){
 const [tx,ty]=toCanvas(t.clientX,t.clientY);
@@ -150,7 +150,7 @@ if(tx > W-140 && ty > H-150){
   touch.attack=true; touch.atkId=t.identifier;
   continue;
 }
-// Joystick area (left side, bottom) — only when inBattle
+// Joystick area (left side, bottom)  - only when inBattle
 if(russia.inBattle && tx < 160 && ty > H-160){
   touch.jActive=true; touch.jId=t.identifier;
   touch.jSX=tx; touch.jSY=ty; touch.jx=0; touch.jy=0;
@@ -162,7 +162,7 @@ handleClick(tx,ty);
 }
 },{passive:false});
 
-canvas.addEventListener(‘touchmove’, e => {
+canvas.addEventListener('touchmove', e => {
 e.preventDefault();
 for(const t of e.changedTouches){
 const [tx,ty]=toCanvas(t.clientX,t.clientY);
@@ -175,7 +175,7 @@ touch.jx=dx/JR; touch.jy=dy/JR;
 }
 },{passive:false});
 
-canvas.addEventListener(‘touchend’, e => {
+canvas.addEventListener('touchend', e => {
 e.preventDefault();
 for(const t of e.changedTouches){
 if(t.identifier===touch.jId){
@@ -187,7 +187,7 @@ touch.attack=false; touch.atkId=-1;
 }
 },{passive:false});
 
-// ── MAP GENERATION ──
+// -- MAP GENERATION --
 function buildMap(){
 farms=[]; bridges=[]; rivers=[];
 
@@ -214,7 +214,7 @@ burnTimer: 0,
 }
 }
 
-// ── ENTITY CREATION ──
+// -- ENTITY CREATION --
 function createFrenchSoldier(x, y, role){
 return {
 x, y: y || GROUND_Y + 20 + Math.random()*60,
@@ -229,7 +229,7 @@ frozen: 0,
 diseased: false,
 flash: 0,
 offsetY: (Math.random()-0.5)*40,
-role: role || ‘column’, // ‘vanguard’,’column’,’raider’
+role: role || 'column', // 'vanguard','column','raider'
 raidTarget: null,
 raidReturning: false,
 id: Math.random(),
@@ -281,7 +281,7 @@ napoleon.retreating = false;
 napoleon.atMoscow = false;
 }
 
-// ── HANDLE INPUT ──
+// -- HANDLE INPUT --
 function handleMouseDown(mx, my){
 // no drag-to-deploy; clicks handled by handleClick
 }
@@ -290,31 +290,31 @@ function handleMouseUp(mx, my){
 }
 
 function handleClick(mx, my){
-if(phase===‘title’){
+if(phase==='title'){
 // Check start button
 if(mx > W/2-120 && mx < W/2+120 && my > H/2+80 && my < H/2+130){
 startGame();
 }
 return;
 }
-if(phase===‘burned’){
+if(phase==='burned'){
 // Continue to retreat phase
-phase = ‘retreat’;
+phase = 'retreat';
 napoleon.retreating = true;
 napoleon.speed = 28;
 retreatTime = 0;
 for(const s of napoleon.soldiers) s.facing = -1;
-addMessage(‘Napoleon retreats! The winter will do the rest…’, 4000);
+addMessage('Napoleon retreats! The winter will do the rest...', 4000);
 return;
 }
-if(phase===‘napoleon_wins’ || phase===‘gameover_win’ || phase===‘gameover_lose’){
+if(phase==='napoleon_wins' || phase==='gameover_win' || phase==='gameover_lose'){
 if(my > H/2+60 && my < H/2+110){
 resetGame();
 }
 return;
 }
 // Burn Moscow choice
-if(phase===‘playing’ && napoleon.atMoscow){
+if(phase==='playing' && napoleon.atMoscow){
 // Buttons drawn in HUD
 const btnY = H/2 + 20;
 if(my > btnY && my < btnY+50){
@@ -323,14 +323,14 @@ if(mx > W/2-220 && mx < W/2-20){
 burnMoscow();
 } else if(mx > W/2+20 && mx < W/2+220){
 // SURRENDER
-phase = ‘napoleon_wins’;
+phase = 'napoleon_wins';
 }
 }
 return;
 }
 
 // Deploy box buttons
-if((phase===’playing’ || phase===’retreat’) && !russia.inBattle){
+if((phase==='playing' || phase==='retreat') && !russia.inBattle){
 // Minus
 if(mx >= BTN_MINUS.x && mx <= BTN_MINUS.x+BTN_MINUS.w && my >= BTN_MINUS.y && my <= BTN_MINUS.y+BTN_MINUS.h){
 if(russia.pendingSoldiers > 0){ russia.pendingSoldiers--; russia.bank++; }
@@ -351,7 +351,7 @@ return;
 }
 
 // Click on deployed Russian soldier to switch control (only when inBattle)
-if(russia.inBattle && (phase===’playing’ || phase===’retreat’)){
+if(russia.inBattle && (phase==='playing' || phase==='retreat')){
 for(let i=0; i<russia.deployed.length; i++){
 const s = russia.deployed[i];
 if(!s.alive) continue;
@@ -368,7 +368,7 @@ break;
 }
 
 function burnMoscow(){
-phase = ‘burned’;
+phase = 'burned';
 // Big fire effects
 for(let i=0; i<40; i++){
 particles.push({
@@ -383,7 +383,7 @@ color: Math.random()>0.5 ? COL.fire : COL.fireGlow,
 });
 }
 // Napoleon gets NO food from Moscow
-addMessage(‘Moscow burns! Napoleon has nothing. He must retreat into winter.’, 5000);
+addMessage('Moscow burns! Napoleon has nothing. He must retreat into winter.', 5000);
 }
 
 function sendIntoBattle(){
@@ -414,7 +414,7 @@ addMessage('Camera follows you. Raid farms, attack soldiers!', 2000);
 }
 
 function startGame(){
-phase = ‘playing’;
+phase = 'playing';
 buildMap();
 initNapoleonArmy();
 russia.bank = 50;
@@ -430,39 +430,39 @@ camera.x = 0;
 effects = [];
 particles = [];
 messages = [];
-addMessage(‘June 1812: Napoleon crosses into Russia with 100,000 men.’, 4000);
-addMessage(‘Use + to add soldiers, then Send into Battle to deploy them.’, 5000);
+addMessage('June 1812: Napoleon crosses into Russia with 100,000 men.', 4000);
+addMessage('Use + to add soldiers, then Send into Battle to deploy them.', 5000);
 }
 
 function resetGame(){
-phase = ‘title’;
+phase = 'title';
 }
 
-// ── MESSAGES ──
+// -- MESSAGES --
 function addMessage(text, duration){
 messages.push({ text, life: duration, maxLife: duration });
 }
 
-// ── UPDATE ──
+// -- UPDATE --
 function update(dt){
 gameTime += dt;
 
 // Update messages
-for(let i=messages.length-1; i>=0; i–){
+for(let i=messages.length-1; i>=0; i--){
 messages[i].life -= dt;
 if(messages[i].life <= 0) messages.splice(i,1);
 }
 
 // Update particles
-for(let i=particles.length-1; i>=0; i–){
+for(let i=particles.length-1; i>=0; i--){
 const p=particles[i];
 p.x += p.vx; p.y += p.vy;
 p.life -= dt;
 if(p.life<=0) particles.splice(i,1);
 }
 
-if(phase===‘playing’) updatePlaying(dt);
-else if(phase===‘retreat’) updateRetreat(dt);
+if(phase==='playing') updatePlaying(dt);
+else if(phase==='retreat') updateRetreat(dt);
 }
 
 function updatePlaying(dt){
@@ -510,7 +510,6 @@ const targetX = napoleon.x + (s.x - napoleon.x) * 0.3 + (Math.random()-0.5)*2;
 s.x += (targetX - s.x) * 0.01 - napoleon.speed * (dt/1000) * 0.9;
 s.walkTimer += dt;
 
-```
   // Winter attrition
   if(temperature < -5){
     const freezeChance = Math.abs(temperature + 5) * 0.000008 * dt;
@@ -524,7 +523,7 @@ s.walkTimer += dt;
   }
 }
 
-// Check rivers — need bridges
+// Check rivers  - need bridges
 for(const bridge of bridges){
   if(!bridge.intact && Math.abs(napoleon.x - bridge.x) < 60){
     napoleon.stopped = true;
@@ -535,14 +534,13 @@ for(const bridge of bridges){
     break;
   }
 }
-```
 
 } else if(napoleon.buildingBridge) {
 napoleon.bridgeBuildTime += dt;
 if(napoleon.bridgeBuildTime >= napoleon.bridgeBuildMax){
 napoleon.buildingBridge = false;
 napoleon.stopped = false;
-// Find the bridge and “rebuild” it
+// Find the bridge and "rebuild" it
 for(const b of bridges){
 if(!b.intact && Math.abs(napoleon.x - b.x)<100){
 b.intact = true; b.hp = 50; break;
@@ -560,7 +558,7 @@ napoleon.food = 0;
 const starveChance = 0.00003 * dt;
 for(const s of napoleon.soldiers){
 if(s.alive && !s.dying && Math.random() < starveChance){
-s.dying = true; s.dyingMs = 1500; s.deathType = ‘disease’;
+s.dying = true; s.dyingMs = 1500; s.deathType = 'disease';
 }
 }
 }
@@ -577,14 +575,14 @@ focusX = russia.deployed[russia.controlledIdx].x - 500;
 camera.x += (focusX - camera.x) * Math.min(1, dt/300);
 camera.x = Math.max(0, Math.min(MAP_WIDTH - W, camera.x));
 
-// Win condition: Napoleon’s army destroyed or he retreats past start
+// Win condition: Napoleon's army destroyed or he retreats past start
 const aliveF = napoleon.soldiers.filter(s=>s.alive&&!s.dying).length;
 if(aliveF <= 0){
-phase = ‘gameover_win’;
-addMessage(‘The Grande Armée is destroyed!’, 5000);
+phase = 'gameover_win';
+addMessage('The Grande Armée is destroyed!', 5000);
 }
 if(napoleon.x < 100){
-phase = ‘gameover_win’;
+phase = 'gameover_win';
 addMessage(`Napoleon escapes with ${aliveF} soldiers of 100,000.`, 5000);
 }
 }
@@ -600,7 +598,7 @@ napoleon.stopped = true;
 napoleon.buildingBridge = true;
 napoleon.bridgeBuildTime = 0;
 napoleon.bridgeBuildMax = 5000;
-addMessage(‘Napoleon must build a bridge! This is your chance!’, 3000);
+addMessage('Napoleon must build a bridge! This is your chance!', 3000);
 return;
 }
 }
@@ -652,7 +650,7 @@ if(s.role === 'vanguard'){
       s.x += Math.sign(dx) * s.speed * 1.1 * (dt/1000);
       s.facing = dx > 0 ? 1 : -1;
     } else {
-      // At farm — forage
+      // At farm  - forage
       const take = Math.min(dt * 0.012, nearFarm.food);
       nearFarm.food -= take;
       napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
@@ -666,7 +664,7 @@ if(s.role === 'vanguard'){
     s.facing = s.x < napoleon.x ? 1 : -1;
   }
 } else {
-  // Main column — spread 50-550 behind Napoleon
+  // Main column  - spread 50-550 behind Napoleon
   const colPos = (napoleon.soldiers.indexOf(s) % 78) / 78;
   const targetX = napoleon.x - 50 - colPos * 500 + s.offsetY * 0.2;
   s.x += (targetX - s.x) * 0.006 + napoleon.speed * (dt/1000) * 0.88;
@@ -689,7 +687,7 @@ napoleon.food = 0;
 // Slow deaths from starvation
 for(const s of napoleon.soldiers){
 if(s.alive && !s.dying && Math.random() < 0.000008 * dt){
-s.dying = true; s.dyingMs = 1500; s.deathType = ‘disease’;
+s.dying = true; s.dyingMs = 1500; s.deathType = 'disease';
 }
 }
 }
@@ -741,10 +739,10 @@ const controlled = russia.controlledIdx >= 0 ? russia.deployed[russia.controlled
 // Player-controlled soldier
 if(controlled && controlled.alive && !controlled.dying){
 let dx=0, dy=0;
-if(keys[‘ArrowLeft’]||keys[‘KeyA’]) dx=-1;
-if(keys[‘ArrowRight’]||keys[‘KeyD’]) dx=1;
-if(keys[‘ArrowUp’]||keys[‘KeyW’]) dy=-1;
-if(keys[‘ArrowDown’]||keys[‘KeyS’]) dy=1;
+if(keys['ArrowLeft']||keys['KeyA']) dx=-1;
+if(keys['ArrowRight']||keys['KeyD']) dx=1;
+if(keys['ArrowUp']||keys['KeyW']) dy=-1;
+if(keys['ArrowDown']||keys['KeyS']) dy=1;
 if(Math.abs(touch.jx)>0.1) dx=touch.jx;
 if(Math.abs(touch.jy)>0.1) dy=touch.jy;
 const len=Math.hypot(dx,dy);
@@ -756,7 +754,6 @@ controlled.x = Math.max(camera.x+20, Math.min(MAP_WIDTH-20, controlled.x));
 if(dx!==0) controlled.facing = dx>0?1:-1;
 controlled.walkTimer += dt * (Math.abs(dx)+Math.abs(dy) > 0 ? 1 : 0);
 
-```
 // Attack
 controlled.atkCd = Math.max(0, controlled.atkCd - dt);
 if(controlled.atkTimer > 0) controlled.atkTimer = Math.max(0, controlled.atkTimer - dt);
@@ -798,7 +795,6 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
     }
   }
 }
-```
 
 }
 
@@ -809,7 +805,6 @@ if(!s.alive || s.dying || s.controlled) continue;
 s.atkCd = Math.max(0, s.atkCd - dt);
 if(s.atkTimer > 0) s.atkTimer = Math.max(0, s.atkTimer - dt);
 
-```
 // Find nearest French
 let nearF = null, nearD = Infinity;
 for(const f of napoleon.soldiers){
@@ -846,7 +841,6 @@ if(nearF && nearD < 200){
 }
 s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
 s.walkTimer += dt;
-```
 
 }
 
@@ -859,7 +853,6 @@ for(const f of napoleon.soldiers){
 if(!f.alive||f.dying) continue;
 f.walkTimer += dt;
 
-```
 let nearR = null, nearD = Infinity;
 for(const r of russia.deployed){
   if(!r.alive||r.dying) continue;
@@ -877,7 +870,6 @@ if(nearR && nearD < 35){
     }
   }
 }
-```
 
 }
 }
@@ -908,17 +900,242 @@ color: Math.random()>0.4 ? COL.fire : COL.fireGlow,
 }
 }
 
-// ── DRAWING ──
+// -- DRAWING --
+
+// Parallax landscape background
+// progress 0-1 = Niemen to Moscow
+// Layer speeds: far=8%, mid=20% of camera scroll
+function drawParallax(){
+const progress = Math.max(0, Math.min(1, napoleon.x / MAP_WIDTH));
+const camFar = camera.x * 0.08;
+const camMid = camera.x * 0.20;
+const winterFactor = Math.max(0, Math.min(1, (5 - temperature) / 30));
+
+// -- FAR LAYER: distant hills / horizon --
+// Hill silhouettes that slowly change colour with season
+const hillBase = GROUND_Y - 20;
+const hillCol = lerpColor(
+  lerpColor('#6a8a5a', '#4a6a8a', Math.min(1, progress * 3)),  // green -> grey-blue forest
+  '#9a9aaa', // winter grey
+  winterFactor * 0.7
+);
+
+ctx.fillStyle = hillCol;
+// Generate repeating hills using sine waves, offset by parallax
+ctx.beginPath();
+ctx.moveTo(0, hillBase);
+for(let x = 0; x <= W; x += 4){
+  const wx = x + camFar;
+  const h = Math.sin(wx * 0.0015) * 30 +
+            Math.sin(wx * 0.0031 + 1) * 18 +
+            Math.sin(wx * 0.0007 + 2) * 50;
+  ctx.lineTo(x, hillBase - 28 - h);
+}
+ctx.lineTo(W, GROUND_Y);
+ctx.lineTo(0, GROUND_Y);
+ctx.closePath();
+ctx.fill();
+
+// -- MID LAYER: trees / landscape features --
+// Type transitions based on progress:
+// 0-0.15 open farmland (Lithuania border), 0.15-0.45 birch forest,
+// 0.45-0.70 dark pine/fir, 0.70-0.90 open steppe, 0.90-1.0 outskirts
+
+const treeY = GROUND_Y - 2;
+
+if(progress < 0.18){
+  // Open rolling fields — scattered lone trees + haystacks
+  drawScatteredTrees(camMid, treeY, winterFactor, 'oak', progress);
+} else if(progress < 0.50){
+  // Classic Russian birch forest — white trunks, light canopy
+  drawBirchForest(camMid, treeY, winterFactor, progress);
+} else if(progress < 0.72){
+  // Dense dark pine / fir forest (Smolensk region)
+  drawPineForest(camMid, treeY, winterFactor, progress);
+} else if(progress < 0.92){
+  // Open steppe / burned landscape approaching Moscow
+  drawSteppe(camMid, treeY, winterFactor, progress);
+} else {
+  // Moscow outskirts — church/monastery silhouettes on horizon
+  drawMoscowOutskirts(camMid, treeY, winterFactor);
+}
+}
+
+function drawScatteredTrees(camOffset, treeY, winterFactor, type, progress){
+// Sparse oak/elm trees + distant church spires
+for(let i = 0; i < 18; i++){
+  const seedX = (i * 1847 + 331) % 3200;
+  const sx = ((seedX - camOffset % 3200) + 3200) % 3200 - 200;
+  if(sx < -60 || sx > W + 60) continue;
+  const h = 28 + (i * 13) % 22;
+  const trunkW = 4 + (i * 7) % 4;
+  // Trunk
+  ctx.fillStyle = lerpColor('#5a4a30', '#8a8a8a', winterFactor * 0.5);
+  ctx.fillRect(sx - trunkW/2, treeY - h, trunkW, h);
+  // Canopy
+  const leafAlpha = winterFactor > 0.5 ? 0.3 : 1;
+  const leafCol = lerpColor(
+    progress < 0.1 ? '#5a8a3a' : '#3a7a2a',
+    '#8a8a6a',
+    winterFactor
+  );
+  ctx.fillStyle = leafCol;
+  ctx.globalAlpha = leafAlpha;
+  ctx.beginPath(); ctx.arc(sx, treeY - h - 6, 14 + (i%3)*4, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+// Distant village church silhouette
+const churchX = ((800 - camOffset % 2000) + 2000) % 2000;
+if(churchX < W + 60){
+  ctx.fillStyle = lerpColor('#556055', '#666070', winterFactor);
+  ctx.fillRect(churchX - 8, treeY - 45, 16, 45);
+  ctx.beginPath(); ctx.moveTo(churchX-12, treeY-45); ctx.lineTo(churchX, treeY-62); ctx.lineTo(churchX+12, treeY-45); ctx.fill();
+  // Onion dome silhouette
+  ctx.beginPath(); ctx.arc(churchX, treeY-68, 8, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(churchX-4, treeY-74); ctx.quadraticCurveTo(churchX, treeY-82, churchX+4, treeY-74); ctx.fill();
+}
+}
+
+function drawBirchForest(camOffset, treeY, winterFactor, progress){
+// Dense birch grove — white trunks, shimmering leaves
+const leafCol = lerpColor(
+  progress < 0.32 ? '#a0c860' : '#c8a830',  // summer green -> autumn gold
+  '#d8d8cc',
+  winterFactor
+);
+const leafAlpha = winterFactor > 0.6 ? 0.25 : (winterFactor > 0.3 ? 0.6 : 1);
+const treeSpacing = 28;
+
+for(let i = 0; i < 40; i++){
+  const seedX = (i * 919 + 127) % 4000;
+  const sx = ((seedX - camOffset % 4000) + 4000) % 4000 - 40;
+  if(sx < -50 || sx > W + 50) continue;
+  const h = 32 + (i * 11) % 26;
+  const lean = Math.sin(i * 2.3) * 3;
+  // White/silver birch trunk
+  ctx.fillStyle = lerpColor('#e8e8dc', '#c8c8c0', winterFactor * 0.3);
+  ctx.fillRect(sx - 2 + lean, treeY - h, 4, h);
+  // Bark markings
+  ctx.fillStyle = 'rgba(80,70,60,0.35)';
+  for(let m = 0; m < 3; m++) ctx.fillRect(sx - 2 + lean, treeY - h*0.3 - m*9, 4, 2);
+  // Canopy
+  ctx.fillStyle = leafCol;
+  ctx.globalAlpha = leafAlpha;
+  ctx.beginPath(); ctx.ellipse(sx + lean, treeY - h, 10 + (i%4)*3, 14 + (i%3)*3, 0, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+}
+
+function drawPineForest(camOffset, treeY, winterFactor, progress){
+// Dark fir/pine silhouettes
+const pineCol = lerpColor('#1a3a1a', '#2a3a2a', winterFactor * 0.4);
+const snowCol = 'rgba(220,230,240,0.7)';
+
+for(let i = 0; i < 32; i++){
+  const seedX = (i * 1373 + 89) % 3600;
+  const sx = ((seedX - camOffset % 3600) + 3600) % 3600 - 50;
+  if(sx < -50 || sx > W + 50) continue;
+  const h = 38 + (i * 17) % 30;
+  // Trunk
+  ctx.fillStyle = '#2a1a0a';
+  ctx.fillRect(sx - 2, treeY - 12, 4, 12);
+  // Pine triangle tiers
+  ctx.fillStyle = pineCol;
+  for(let t = 0; t < 3; t++){
+    const ty = treeY - 12 - t * (h/3);
+    const tw = 18 - t * 4;
+    ctx.beginPath();
+    ctx.moveTo(sx - tw, ty);
+    ctx.lineTo(sx, ty - h/3 - 4);
+    ctx.lineTo(sx + tw, ty);
+    ctx.closePath(); ctx.fill();
+    // Snow on branches in winter
+    if(winterFactor > 0.4){
+      ctx.fillStyle = snowCol;
+      ctx.beginPath();
+      ctx.moveTo(sx - tw * 0.7, ty);
+      ctx.lineTo(sx, ty - 6);
+      ctx.lineTo(sx + tw * 0.7, ty);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = pineCol;
+    }
+  }
+}
+}
+
+function drawSteppe(camOffset, treeY, winterFactor, progress){
+// Flat open steppe - burned fields, lonely dead trees, smoke columns
+const burnProgress = (progress - 0.70) / 0.22;
+
+// Scorched field texture
+const fieldCol = lerpColor(
+  lerpColor('#8a7a4a', '#5a3a1a', burnProgress),
+  '#9a9088',
+  winterFactor
+);
+ctx.fillStyle = fieldCol;
+ctx.fillRect(0, treeY - 18, W, 18);
+
+// Dead/stripped trees
+for(let i = 0; i < 10; i++){
+  const seedX = (i * 2131 + 557) % 5000;
+  const sx = ((seedX - camOffset % 5000) + 5000) % 5000 - 40;
+  if(sx < -40 || sx > W + 40) continue;
+  const h = 22 + (i * 9) % 18;
+  ctx.fillStyle = '#3a2a18';
+  ctx.fillRect(sx - 2, treeY - h, 3, h);
+  // Bare branches
+  ctx.strokeStyle = '#3a2a18'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(sx, treeY-h); ctx.lineTo(sx-8, treeY-h+8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sx, treeY-h); ctx.lineTo(sx+7, treeY-h+6); ctx.stroke();
+}
+
+// Distant smoke columns from burning villages
+for(let i = 0; i < 3; i++){
+  const seedX = (i * 3017 + 233) % 5000;
+  const sx = ((seedX - camOffset % 5000) + 5000) % 5000 - 20;
+  if(sx < 0 || sx > W) continue;
+  ctx.strokeStyle = `rgba(80,70,60,${0.3 + burnProgress*0.3})`;
+  ctx.lineWidth = 3 + i * 2;
+  ctx.beginPath();
+  for(let y = treeY - 15; y > treeY - 80; y -= 5){
+    const wobble = Math.sin(gameTime * 0.001 + y * 0.1 + i) * 3;
+    if(y === treeY - 15) ctx.moveTo(sx + wobble, y);
+    else ctx.lineTo(sx + wobble, y);
+  }
+  ctx.stroke();
+}
+}
+
+function drawMoscowOutskirts(camOffset, treeY, winterFactor){
+// Monastery walls and church domes on the horizon
+ctx.fillStyle = lerpColor('#7a6a5a', '#888090', winterFactor);
+
+for(let i = 0; i < 3; i++){
+  const sx = 180 + i * 260 - (camOffset % 900);
+  if(sx < -100 || sx > W + 100) continue;
+  const baseH = 30 + i * 8;
+  // Wall
+  ctx.fillRect(sx - 40, treeY - baseH, 80, baseH);
+  // Battlements
+  for(let b = 0; b < 5; b++) ctx.fillRect(sx - 38 + b*18, treeY - baseH - 6, 10, 6);
+  // Tower
+  ctx.fillRect(sx - 10, treeY - baseH - 20, 20, 20);
+  // Onion dome
+  ctx.beginPath(); ctx.arc(sx, treeY - baseH - 26, 11, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(sx - 5, treeY - baseH - 34); ctx.quadraticCurveTo(sx, treeY - baseH - 44, sx + 5, treeY - baseH - 34); ctx.fill();
+}
+}
 
 function drawSky(){
 const winterFactor = Math.max(0, Math.min(1, (5 - temperature) / 30));
 const g = ctx.createLinearGradient(0,0,0,GROUND_Y);
 if(winterFactor < 0.3){
-g.addColorStop(0,’#7a8a9a’);
-g.addColorStop(1,’#b0b8c0’);
+g.addColorStop(0,'#7a8a9a');
+g.addColorStop(1,'#b0b8c0');
 } else {
-g.addColorStop(0, lerpColor(’#7a8a9a’,’#4a5060’,winterFactor));
-g.addColorStop(1, lerpColor(’#b0b8c0’,’#8a8a95’,winterFactor));
+g.addColorStop(0, lerpColor('#7a8a9a','#4a5060',winterFactor));
+g.addColorStop(1, lerpColor('#b0b8c0','#8a8a95',winterFactor));
 }
 ctx.fillStyle=g;
 ctx.fillRect(0,0,W,GROUND_Y);
@@ -947,7 +1164,7 @@ ctx.fillStyle = roadCol;
 ctx.fillRect(0, GROUND_Y + 30, W, 50);
 
 // Road details
-ctx.strokeStyle = lerpColor(’#5a5040’,’#808088’, winterFactor);
+ctx.strokeStyle = lerpColor('#5a5040','#808088', winterFactor);
 ctx.lineWidth = 0.5;
 ctx.setLineDash([8,12]);
 ctx.beginPath();
@@ -962,7 +1179,6 @@ for(const river of rivers){
 const sx = river.x - camera.x;
 if(sx < -100 || sx > W+100) continue;
 
-```
 const winterFactor = Math.max(0, Math.min(1, (-temperature)/15));
 
 // River water
@@ -988,7 +1204,6 @@ if(winterFactor < 0.7){
     ctx.stroke();
   }
 }
-```
 
 }
 }
@@ -999,11 +1214,11 @@ const sx = bridge.x - camera.x;
 if(sx < -100 || sx > W+100) continue;
 if(!bridge.intact){
 // Broken bridge remnants
-ctx.fillStyle = ‘#4a3020’;
+ctx.fillStyle = '#4a3020';
 ctx.fillRect(sx-bridge.width/2-5, GROUND_Y+25, 15, 8);
 ctx.fillRect(sx+bridge.width/2-10, GROUND_Y+25, 15, 8);
 // Broken planks in water
-ctx.fillStyle = ‘#5a4030’;
+ctx.fillStyle = '#5a4030';
 ctx.save(); ctx.translate(sx-10, GROUND_Y+40); ctx.rotate(0.3);
 ctx.fillRect(-12,-3,24,6); ctx.restore();
 continue;
@@ -1012,7 +1227,7 @@ continue;
 ctx.fillStyle = COL.wood;
 ctx.fillRect(sx-bridge.width/2-5, GROUND_Y+22, bridge.width+10, 18);
 // Planks
-ctx.strokeStyle = ‘#3a2818’; ctx.lineWidth=1;
+ctx.strokeStyle = '#3a2818'; ctx.lineWidth=1;
 for(let p=0; p<bridge.width; p+=8){
 ctx.beginPath();
 ctx.moveTo(sx-bridge.width/2+p, GROUND_Y+22);
@@ -1020,10 +1235,9 @@ ctx.lineTo(sx-bridge.width/2+p, GROUND_Y+40);
 ctx.stroke();
 }
 // Rails
-ctx.fillStyle = ‘#4a3828’;
+ctx.fillStyle = '#4a3828';
 ctx.fillRect(sx-bridge.width/2-5, GROUND_Y+18, bridge.width+10, 5);
 
-```
 // HP bar if damaged
 if(bridge.hp < bridge.maxHp){
   const pct = bridge.hp/bridge.maxHp;
@@ -1032,7 +1246,6 @@ if(bridge.hp < bridge.maxHp){
   ctx.fillStyle = pct>0.5?'#4a8a2a':'#c84020';
   ctx.fillRect(sx-25, GROUND_Y+8, 50*pct, 6);
 }
-```
 
 }
 }
@@ -1043,12 +1256,11 @@ const sx = farm.x - camera.x;
 if(sx < -80 || sx > W+80) continue;
 if(!farm.alive && !farm.burning){
 // Charred remains
-ctx.fillStyle=’#2a2020’;
+ctx.fillStyle='#2a2020';
 ctx.fillRect(sx-12, GROUND_Y-5, 24, 10);
 continue;
 }
 
-```
 // Farmhouse
 ctx.fillStyle = COL.farm;
 ctx.fillRect(sx-15, GROUND_Y-25, 30, 25);
@@ -1087,7 +1299,6 @@ if(farm.burning){
   ctx.fillStyle=`rgba(232,80,32,${0.4+Math.sin(gameTime*0.008)*0.2})`;
   ctx.fillRect(sx-20, GROUND_Y-45, 40, 45);
 }
-```
 
 }
 }
@@ -1096,12 +1307,12 @@ function drawMoscow(){
 const sx = MOSCOW_X - camera.x;
 if(sx < -400 || sx > W+200) return;
 
-const burned = (phase===‘burned’||phase===‘retreat’||phase===‘gameover_win’);
+const burned = (phase==='burned'||phase==='retreat'||phase==='gameover_win');
 
 // Kremlin-style buildings
-const baseCol = burned ? ‘#3a1a0a’ : ‘#c8a878’;
-const roofCol = burned ? ‘#1a0a0a’ : ‘#2a6a2a’;
-const wallCol = burned ? ‘#4a2a10’ : ‘#e0d0b0’;
+const baseCol = burned ? '#3a1a0a' : '#c8a878';
+const roofCol = burned ? '#1a0a0a' : '#2a6a2a';
+const wallCol = burned ? '#4a2a10' : '#e0d0b0';
 
 // Main wall
 ctx.fillStyle = wallCol;
@@ -1122,7 +1333,7 @@ ctx.moveTo(tx-8, GROUND_Y-145);
 ctx.quadraticCurveTo(tx, GROUND_Y-170, tx+8, GROUND_Y-145);
 ctx.fill();
 // Cross
-ctx.fillStyle = burned?’#4a3020’:COL.gold;
+ctx.fillStyle = burned?'#4a3020':COL.gold;
 ctx.fillRect(tx-1, GROUND_Y-175, 3, 12);
 ctx.fillRect(tx-4, GROUND_Y-172, 9, 3);
 }
@@ -1134,13 +1345,13 @@ ctx.fillRect(sx-80, GROUND_Y-180, 340, 180);
 }
 
 // Label
-ctx.fillStyle = burned?’#8a3020’:’#3a2a1a’;
-ctx.font = ‘bold 14px Cinzel, serif’;
-ctx.textAlign = ‘center’;
-ctx.fillText(‘MOSCOW’, sx+90, GROUND_Y+20);
+ctx.fillStyle = burned?'#8a3020':'#3a2a1a';
+ctx.font = 'bold 14px Cinzel, serif';
+ctx.textAlign = 'center';
+ctx.fillText('MOSCOW', sx+90, GROUND_Y+20);
 }
 
-// ── SOLDIER SPRITES ──
+// -- SOLDIER SPRITES --
 
 function drawFrenchSoldier(s){
 if(!s.alive && !s.dying) return;
@@ -1154,98 +1365,98 @@ ctx.translate(sx, sy);
 if(s.dying){
 const alpha = Math.max(0, s.dyingMs / 800);
 ctx.globalAlpha = alpha;
-if(s.deathType===’freeze’){
+if(s.deathType==='freeze'){
 ctx.filter = `saturate(0.2) brightness(1.4) hue-rotate(195deg)`;
-} else if(s.deathType===’disease’){
+} else if(s.deathType==='disease'){
 ctx.filter = `saturate(0.4) hue-rotate(75deg) brightness(0.8)`;
 }
 ctx.rotate(Math.min(Math.PI/2, (1-alpha)*Math.PI/1.8) * s.facing);
 }
-if(s.flash > 0) ctx.filter = ‘brightness(6)’;
+if(s.flash > 0) ctx.filter = 'brightness(6)';
 
 const wk = Math.floor(s.walkTimer/190)%2;
 const f = s.facing;
-const isRaider = s.role === ‘raider’;
-const isVanguard = s.role === ‘vanguard’;
+const isRaider = s.role === 'raider';
+const isVanguard = s.role === 'vanguard';
 
 // Shadow
-ctx.fillStyle=’rgba(0,0,0,0.18)’;
+ctx.fillStyle='rgba(0,0,0,0.18)';
 ctx.beginPath(); ctx.ellipse(0,3,8,2.5,0,0,Math.PI*2); ctx.fill();
 
 // Shako (tall cylindrical hat)
-ctx.fillStyle=’#111120’;
+ctx.fillStyle='#111120';
 ctx.fillRect(-4,-26,8,12);
 // Brass top plate
-ctx.fillStyle=’#7a5a10’;
+ctx.fillStyle='#7a5a10';
 ctx.fillRect(-4,-26,8,2);
 // Leather peak / visor
-ctx.fillStyle=’#0a0a18’;
+ctx.fillStyle='#0a0a18';
 ctx.fillRect(-6,-16,12,3);
 // White band near brim
-ctx.fillStyle=’#cccccc’;
+ctx.fillStyle='#cccccc';
 ctx.fillRect(-4,-14,8,2);
 // Plume (red for line infantry, white for guard, yellow for raider)
-ctx.fillStyle = isRaider ? ‘#cc8800’ : (isVanguard ? ‘#ffffff’ : ‘#cc1a1a’);
+ctx.fillStyle = isRaider ? '#cc8800' : (isVanguard ? '#ffffff' : '#cc1a1a');
 ctx.fillRect(-1,-31,3,6);
 // Cockade (tricolor)
-ctx.fillStyle=’#cc1a1a’; ctx.fillRect(-2,-27,2,2);
-ctx.fillStyle=’#ffffff’; ctx.fillRect(0,-27,2,2);
+ctx.fillStyle='#cc1a1a'; ctx.fillRect(-2,-27,2,2);
+ctx.fillStyle='#ffffff'; ctx.fillRect(0,-27,2,2);
 
 // Head
-ctx.fillStyle=’#c8986a’;
+ctx.fillStyle='#c8986a';
 ctx.fillRect(-3,-13,7,8);
 // Ear
 ctx.fillRect(f>0?3:-4,-12,2,4);
 
 // Dark blue coat body
-ctx.fillStyle=’#16246a’;
+ctx.fillStyle='#16246a';
 ctx.fillRect(-6,-5,12,13);
 // Red collar / lapel
-ctx.fillStyle=’#aa1a1a’;
+ctx.fillStyle='#aa1a1a';
 ctx.fillRect(-3,-5,6,4);
 // White lapel facing
-ctx.fillStyle=’#d8d8d8’;
+ctx.fillStyle='#d8d8d8';
 ctx.fillRect(-2,-4,2,3);
 ctx.fillRect(1,-4,2,3);
 // Epaulette (red fringed shoulder decoration)
-ctx.fillStyle=’#cc1a1a’;
+ctx.fillStyle='#cc1a1a';
 ctx.fillRect(f>0?-6:-2,-5,4,3);
-ctx.fillStyle=’#ffaa00’;
+ctx.fillStyle='#ffaa00';
 ctx.fillRect(f>0?-6:-2,-3,4,2);
 
 // White cross-belts (cartridge box X pattern)
-ctx.strokeStyle=’#e0e0e0’; ctx.lineWidth=1.5;
+ctx.strokeStyle='#e0e0e0'; ctx.lineWidth=1.5;
 ctx.beginPath(); ctx.moveTo(-5,-4); ctx.lineTo(4,6); ctx.stroke();
 ctx.beginPath(); ctx.moveTo(4,-4); ctx.lineTo(-5,6); ctx.stroke();
 // Cartridge box (black square at belt)
-ctx.fillStyle=’#222’; ctx.fillRect(-3,4,6,4);
+ctx.fillStyle='#222'; ctx.fillRect(-3,4,6,4);
 
 // White breeches (legs)
 const lL=wk?2:-1, lR=wk?-1:2;
-ctx.fillStyle=’#d8d8d0’;
+ctx.fillStyle='#d8d8d0';
 ctx.fillRect(-5,8,4,8+lL);
 ctx.fillRect(1,8,4,8+lR);
 
 // Black tall boots
-ctx.fillStyle=’#111’;
+ctx.fillStyle='#111';
 ctx.fillRect(-6,13+lL,5,5);
 ctx.fillRect(0,13+lR,5,5);
 // Boot top highlight
-ctx.fillStyle=’#333’;
+ctx.fillStyle='#333';
 ctx.fillRect(-6,13+lL,5,2);
 ctx.fillRect(0,13+lR,5,2);
 
 // Musket with long barrel
-ctx.fillStyle=’#2a1a0a’;
+ctx.fillStyle='#2a1a0a';
 ctx.fillRect(f*7,-14,2,22);
 // Musket lock (side metal parts)
-ctx.fillStyle=’#888’;
+ctx.fillStyle='#888';
 ctx.fillRect(f*7-f*1,-10,f*2,4);
 // Bayonet (long spike)
-ctx.fillStyle=’#aaaaaa’;
+ctx.fillStyle='#aaaaaa';
 ctx.fillRect(f*7,-20,2,7);
 
-ctx.filter=’none’;
+ctx.filter='none';
 ctx.restore();
 }
 
@@ -1263,7 +1474,7 @@ const alpha = s.dyingMs / 800;
 ctx.globalAlpha = alpha;
 ctx.rotate(Math.min(Math.PI/3, (1-alpha)*Math.PI/2));
 }
-if(s.flash > 0) ctx.filter = ‘brightness(5)’;
+if(s.flash > 0) ctx.filter = 'brightness(5)';
 
 const wk = Math.floor(s.walkTimer/180)%2;
 const f = s.facing;
@@ -1271,17 +1482,17 @@ const isControlled = s.controlled;
 
 // Selection ring
 if(isControlled){
-ctx.strokeStyle=’#ffcc00’;
+ctx.strokeStyle='#ffcc00';
 ctx.lineWidth=2;
 ctx.beginPath(); ctx.ellipse(0,3,12,5,0,0,Math.PI*2); ctx.stroke();
 }
 
 // Shadow
-ctx.fillStyle=‘rgba(0,0,0,0.2)’;
+ctx.fillStyle='rgba(0,0,0,0.2)';
 ctx.beginPath(); ctx.ellipse(0,2,8,3,0,0,Math.PI*2); ctx.fill();
 
 // Kiver (Russian shako)
-ctx.fillStyle=’#1a2a1a’;
+ctx.fillStyle='#1a2a1a';
 ctx.fillRect(-4,-23,8,9);
 ctx.fillStyle = COL.russian;
 ctx.fillRect(-5,-15,10,3);
@@ -1290,22 +1501,22 @@ ctx.fillStyle=COL.gold;
 ctx.fillRect(-2,-21,4,3);
 
 // Head
-ctx.fillStyle=’#d4a878’;
+ctx.fillStyle='#d4a878';
 ctx.fillRect(-4,-13,8,8);
 
 // Body (green coat)
 ctx.fillStyle = COL.russian;
 ctx.fillRect(-6,-5,12,13);
 // Belt
-ctx.fillStyle=’#ccc’;
+ctx.fillStyle='#ccc';
 ctx.fillRect(-6,3,12,2);
 
 // Legs (white)
 const lL=wk?2:-1, lR=wk?-1:2;
-ctx.fillStyle=’#ccc’;
+ctx.fillStyle='#ccc';
 ctx.fillRect(-5,8,4,8+lL);
 ctx.fillRect(1,8,4,8+lR);
-ctx.fillStyle=’#1a1a1a’;
+ctx.fillStyle='#1a1a1a';
 ctx.fillRect(-5,15+lL,5,3);
 ctx.fillRect(0,15+lR,5,3);
 
@@ -1314,13 +1525,13 @@ const atkSwing = s.atkTimer > 0 ? f*10 : 0;
 ctx.save();
 ctx.translate(f*7+atkSwing, -10);
 ctx.rotate(f * (s.atkTimer>0 ? 0.5 : 0.1));
-ctx.fillStyle=’#3a2a1a’;
+ctx.fillStyle='#3a2a1a';
 ctx.fillRect(-1,-12,2,18);
-ctx.fillStyle=’#aaa’;
+ctx.fillStyle='#aaa';
 ctx.fillRect(-1,-16,2,5);
 ctx.restore();
 
-ctx.filter=‘none’;
+ctx.filter='none';
 ctx.restore();
 }
 
@@ -1336,12 +1547,12 @@ const f = napoleon.retreating ? -1 : 1;
 // Subtle walk bob
 const bob = Math.sin(gameTime * 0.004) * 1.2;
 
-// Shadow (larger — he’s a bigger figure)
-ctx.fillStyle=’rgba(0,0,0,0.28)’;
+// Shadow (larger  - he's a bigger figure)
+ctx.fillStyle='rgba(0,0,0,0.28)';
 ctx.beginPath(); ctx.ellipse(0,4+bob,13,4,0,0,Math.PI*2); ctx.fill();
 
 // Bicorne hat (side-on, the iconic look)
-ctx.fillStyle=’#080818’;
+ctx.fillStyle='#080818';
 ctx.beginPath();
 ctx.moveTo(f*-16,-36+bob); ctx.lineTo(f*-4,-30+bob);
 ctx.lineTo(f*-4,-22+bob); ctx.lineTo(f*12,-22+bob);
@@ -1349,70 +1560,70 @@ ctx.lineTo(f*12,-30+bob); ctx.lineTo(f*16,-36+bob);
 ctx.lineTo(f*0,-42+bob);
 ctx.closePath(); ctx.fill();
 // Hat brim highlight
-ctx.fillStyle=’#1a1a30’;
+ctx.fillStyle='#1a1a30';
 ctx.fillRect(f>0?-16:-12,-36+bob, 28, 3);
 // Tricolor cockade
-ctx.fillStyle=’#cc1a1a’; ctx.beginPath(); ctx.arc(f*5,-32+bob,3.5,0,Math.PI*2); ctx.fill();
-ctx.fillStyle=’#ffffff’; ctx.beginPath(); ctx.arc(f*5,-32+bob,2,0,Math.PI*2); ctx.fill();
-ctx.fillStyle=’#2244cc’; ctx.beginPath(); ctx.arc(f*5,-32+bob,0.8,0,Math.PI*2); ctx.fill();
+ctx.fillStyle='#cc1a1a'; ctx.beginPath(); ctx.arc(f*5,-32+bob,3.5,0,Math.PI*2); ctx.fill();
+ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.arc(f*5,-32+bob,2,0,Math.PI*2); ctx.fill();
+ctx.fillStyle='#2244cc'; ctx.beginPath(); ctx.arc(f*5,-32+bob,0.8,0,Math.PI*2); ctx.fill();
 
 // Head (larger than soldiers)
-ctx.fillStyle=’#c8986a’;
+ctx.fillStyle='#c8986a';
 ctx.fillRect(-5,-20+bob,11,12);
 // Ear
 ctx.fillRect(f>0?5:-6,-18+bob,2,5);
 
 // Neck cravat (white)
-ctx.fillStyle=’#e8e8e8’;
+ctx.fillStyle='#e8e8e8';
 ctx.fillRect(-4,-9+bob,8,3);
 
 // Famous gray greatcoat (redingote grise)
-ctx.fillStyle=’#8a8a8a’;
+ctx.fillStyle='#8a8a8a';
 ctx.fillRect(-9,-7+bob,18,22);
 // Coat lapels (dark blue underneath)
-ctx.fillStyle=’#1a2460’;
+ctx.fillStyle='#1a2460';
 ctx.beginPath();
 ctx.moveTo(-2,-7+bob); ctx.lineTo(-2,5+bob); ctx.lineTo(2,5+bob); ctx.lineTo(2,-7+bob);
 ctx.fill();
 // Coat buttons (gold)
 ctx.fillStyle=COL.gold;
 for(let i=0;i<4;i++) ctx.fillRect(-1,-5+bob+i*4,2,2);
-// Legion d’honneur decoration (red ribbon + star)
-ctx.fillStyle=’#cc1a1a’;
+// Legion d'honneur decoration (red ribbon + star)
+ctx.fillStyle='#cc1a1a';
 ctx.fillRect(-7,-3+bob,4,3);
 ctx.fillStyle=COL.gold;
 ctx.beginPath(); ctx.arc(-5,-2+bob,2,0,Math.PI*2); ctx.fill();
-// Epaulettes (gold — general’s rank)
+// Epaulettes (gold  - general's rank)
 ctx.fillStyle=COL.gold;
 ctx.fillRect(-10,-6+bob,4,4);
 ctx.fillRect(6,-6+bob,4,4);
 // Epaulette fringe
-ctx.fillStyle=’#a08010’;
+ctx.fillStyle='#a08010';
 ctx.fillRect(-11,-3+bob,5,3);
 ctx.fillRect(6,-3+bob,5,3);
 
 // White breeches
-ctx.fillStyle=’#ddddd0’;
+ctx.fillStyle='#ddddd0';
 ctx.fillRect(-6,15+bob,5,10);
 ctx.fillRect(1,15+bob,5,10);
 
 // Tall black cavalry boots (signature Napoleon boots)
-ctx.fillStyle=’#111’;
+ctx.fillStyle='#111';
 ctx.fillRect(-7,20+bob,6,12);
 ctx.fillRect(1,20+bob,6,12);
 // Boot top (slightly lighter)
-ctx.fillStyle=’#2a2a2a’;
+ctx.fillStyle='#2a2a2a';
 ctx.fillRect(-7,20+bob,6,3);
 ctx.fillRect(1,20+bob,6,3);
 // Boot spur
-ctx.fillStyle=’#888’;
+ctx.fillStyle='#888';
 ctx.fillRect(f>0?-7:5,29+bob,2,3);
 
 // Sword (at side)
 ctx.save();
 ctx.translate(f*11,-2+bob);
 ctx.rotate(f*0.25);
-ctx.fillStyle=’#aaaaaa’;
+ctx.fillStyle='#aaaaaa';
 ctx.fillRect(-1,-16,2,22);
 ctx.fillStyle=COL.gold;
 ctx.fillRect(-4,-2,8,4);
@@ -1420,49 +1631,49 @@ ctx.fillRect(-2,-4,4,3);
 ctx.restore();
 
 // Name label
-ctx.fillStyle=’rgba(0,0,0,0.55)’;
+ctx.fillStyle='rgba(0,0,0,0.55)';
 ctx.beginPath(); ctx.roundRect(-24,-56+bob,48,14,3); ctx.fill();
-ctx.fillStyle=’#ffd060’; ctx.font=’bold 9px Cinzel, serif’; ctx.textAlign=’center’;
-ctx.fillText(‘NAPOLÉON’, 0, -46+bob);
+ctx.fillStyle='#ffd060'; ctx.font='bold 9px Cinzel, serif'; ctx.textAlign='center';
+ctx.fillText('NAPOLÉON', 0, -46+bob);
 
 ctx.restore();
 }
 
-// ── HUD ──
+// -- HUD --
 
 function drawHUD(){
 // Temperature gauge (top right)
-ctx.fillStyle=‘rgba(0,0,0,0.6)’;
+ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(W-190,8,182,50,8); ctx.fill();
-ctx.fillStyle = temperature > 5 ? ‘#a0c080’ : temperature > -5 ? ‘#c8c040’ : temperature > -15 ? ‘#60a0e0’ : ‘#4060ff’;
-ctx.font=‘bold 22px Cinzel, serif’;
-ctx.textAlign=‘right’;
+ctx.fillStyle = temperature > 5 ? '#a0c080' : temperature > -5 ? '#c8c040' : temperature > -15 ? '#60a0e0' : '#4060ff';
+ctx.font='bold 22px Cinzel, serif';
+ctx.textAlign='right';
 ctx.fillText(`${Math.round(temperature)}°C`, W-16, 36);
-ctx.fillStyle=’#aaa’; ctx.font=‘11px “IM Fell English”, serif’;
+ctx.fillStyle='#aaa'; ctx.font='11px "IM Fell English", serif';
 ctx.fillText(getSeasonLabel(), W-16, 52);
 
 // French army stats (top center)
 const aliveF = napoleon.soldiers.filter(s=>s.alive&&!s.dying).length;
-ctx.fillStyle=‘rgba(0,0,0,0.6)’;
+ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(W/2-150,8,300,50,8); ctx.fill();
-ctx.fillStyle=COL.frenchLight; ctx.font=‘bold 13px Cinzel, serif’; ctx.textAlign=‘center’;
+ctx.fillStyle=COL.frenchLight; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='center';
 ctx.fillText(`Grande Armée: ${aliveF} / 100`, W/2, 28);
 // Food bar
 const foodPct = Math.max(0, napoleon.food / napoleon.maxFood);
-ctx.fillStyle=’#333’; ctx.fillRect(W/2-100,36,200,12);
-ctx.fillStyle = foodPct > 0.3 ? ‘#c8a830’ : ‘#c84020’;
+ctx.fillStyle='#333'; ctx.fillRect(W/2-100,36,200,12);
+ctx.fillStyle = foodPct > 0.3 ? '#c8a830' : '#c84020';
 ctx.fillRect(W/2-100,36,200*foodPct,12);
-ctx.strokeStyle=’#555’; ctx.lineWidth=0.5; ctx.strokeRect(W/2-100,36,200,12);
-ctx.fillStyle=’#ddd’; ctx.font=‘9px “IM Fell English”, serif’;
+ctx.strokeStyle='#555'; ctx.lineWidth=0.5; ctx.strokeRect(W/2-100,36,200,12);
+ctx.fillStyle='#ddd'; ctx.font='9px "IM Fell English", serif';
 ctx.fillText(`Food: ${Math.floor(napoleon.food)}`, W/2, 46);
 
 // Russian forces (top left)
 const aliveR = russia.deployed.filter(s=>s.alive&&!s.dying).length;
-ctx.fillStyle=‘rgba(0,0,0,0.6)’;
+ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(8,8,180,50,8); ctx.fill();
-ctx.fillStyle=COL.russianLight; ctx.font=‘bold 13px Cinzel, serif’; ctx.textAlign=‘left’;
+ctx.fillStyle=COL.russianLight; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='left';
 ctx.fillText(`Russian Army`, 16, 28);
-ctx.fillStyle=’#aaa’; ctx.font=‘11px “IM Fell English”, serif’;
+ctx.fillStyle='#aaa'; ctx.font='11px "IM Fell English", serif';
 ctx.fillText(`Deployed: ${aliveR}  |  Reserve: ${russia.bank}`, 16, 46);
 
 // Deploy box (bottom left)
@@ -1475,36 +1686,36 @@ drawProgressBar();
 drawMessages();
 
 // Moscow choice
-if(napoleon.atMoscow && phase===‘playing’){
+if(napoleon.atMoscow && phase==='playing'){
 drawMoscowChoice();
 }
 
 // inBattle indicator
 if(russia.inBattle){
-ctx.fillStyle=’rgba(0,80,0,0.55)’;
+ctx.fillStyle='rgba(0,80,0,0.55)';
 ctx.beginPath(); ctx.roundRect(8,H-36,180,28,6); ctx.fill();
-ctx.fillStyle=’#aaffaa’; ctx.font=’bold 11px Cinzel, serif’; ctx.textAlign=’left’;
+ctx.fillStyle='#aaffaa'; ctx.font='bold 11px Cinzel, serif'; ctx.textAlign='left';
 const cIdx = russia.controlledIdx;
 ctx.fillText(`⚔ In Battle  WASD+SPACE`, 16, H-17);
 }
 
 // Mobile virtual controls
-if(isMobile && (phase===‘playing’||phase===‘retreat’) && !(napoleon.atMoscow && phase===‘playing’)){
+if(isMobile && (phase==='playing'||phase==='retreat') && !(napoleon.atMoscow && phase==='playing')){
 ctx.save(); ctx.globalAlpha=0.42;
 // Joystick base
-ctx.fillStyle=’#222’;
+ctx.fillStyle='#222';
 ctx.beginPath(); ctx.arc(JCX,JCY,JR,0,Math.PI*2); ctx.fill();
-ctx.strokeStyle=’#444’; ctx.lineWidth=2; ctx.stroke();
+ctx.strokeStyle='#444'; ctx.lineWidth=2; ctx.stroke();
 // Joystick knob
 const kx=JCX+touch.jx*(JR-16), ky=JCY+touch.jy*(JR-16);
-ctx.fillStyle=’#666’;
+ctx.fillStyle='#666';
 ctx.beginPath(); ctx.arc(kx,ky,18,0,Math.PI*2); ctx.fill();
 // Attack button
-ctx.fillStyle=’#6d1818’;
+ctx.fillStyle='#6d1818';
 ctx.beginPath(); ctx.arc(ACX,ACY,AR,0,Math.PI*2); ctx.fill();
-ctx.fillStyle=’#fff’; ctx.font=‘bold 22px serif’; ctx.textAlign=‘center’; ctx.textBaseline=‘middle’;
-ctx.fillText(’\u2694’,ACX,ACY);
-ctx.textBaseline=‘alphabetic’;
+ctx.fillStyle='#fff'; ctx.font='bold 22px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+ctx.fillText('\u2694',ACX,ACY);
+ctx.textBaseline='alphabetic';
 ctx.restore();
 }
 }
@@ -1518,66 +1729,66 @@ const BTN_SEND  = { x:18, y:H-34, w:200, h:26 };
 function drawDeployBox(){
 if(russia.inBattle) return; // Hide when in battle
 // Panel
-ctx.fillStyle=’rgba(10,20,10,0.82)’;
+ctx.fillStyle='rgba(10,20,10,0.82)';
 ctx.beginPath(); ctx.roundRect(DEPLOY_BOX.x,DEPLOY_BOX.y,DEPLOY_BOX.w,DEPLOY_BOX.h,10); ctx.fill();
 ctx.strokeStyle=COL.russianLight; ctx.lineWidth=1.5;
 ctx.beginPath(); ctx.roundRect(DEPLOY_BOX.x,DEPLOY_BOX.y,DEPLOY_BOX.w,DEPLOY_BOX.h,10); ctx.stroke();
 
 // Title
-ctx.fillStyle=’#aad4aa’; ctx.font=’bold 11px Cinzel, serif’; ctx.textAlign=’left’;
+ctx.fillStyle='#aad4aa'; ctx.font='bold 11px Cinzel, serif'; ctx.textAlign='left';
 ctx.fillText(`Russian Reserve: ${russia.bank}`, 16, H-90);
 
 // Pending label
-ctx.fillStyle=’#ddd’; ctx.font=’11px “IM Fell English”, serif’;
-ctx.fillText(‘Send into battle:’, 16, H-74);
+ctx.fillStyle='#ddd'; ctx.font='11px "IM Fell English", serif';
+ctx.fillText('Send into battle:', 16, H-74);
 
 // Minus button
 const canDecrease = russia.pendingSoldiers > 0;
-ctx.fillStyle = canDecrease ? ‘#3a2a2a’ : ‘#1a1a1a’;
+ctx.fillStyle = canDecrease ? '#3a2a2a' : '#1a1a1a';
 ctx.beginPath(); ctx.roundRect(BTN_MINUS.x,BTN_MINUS.y,BTN_MINUS.w,BTN_MINUS.h,5); ctx.fill();
-ctx.fillStyle = canDecrease ? ‘#ff8888’ : ‘#555’;
-ctx.font=’bold 16px serif’; ctx.textAlign=’center’;
-ctx.fillText(‘−’, BTN_MINUS.x+BTN_MINUS.w/2, BTN_MINUS.y+20);
+ctx.fillStyle = canDecrease ? '#ff8888' : '#555';
+ctx.font='bold 16px serif'; ctx.textAlign='center';
+ctx.fillText('−', BTN_MINUS.x+BTN_MINUS.w/2, BTN_MINUS.y+20);
 
 // Count display
-ctx.fillStyle=’rgba(0,0,0,0.5)’;
+ctx.fillStyle='rgba(0,0,0,0.5)';
 ctx.fillRect(52,H-68,52,28);
-ctx.strokeStyle=’#444’; ctx.lineWidth=1; ctx.strokeRect(52,H-68,52,28);
-ctx.fillStyle=’#fff’; ctx.font=’bold 15px Cinzel, serif’; ctx.textAlign=’center’;
+ctx.strokeStyle='#444'; ctx.lineWidth=1; ctx.strokeRect(52,H-68,52,28);
+ctx.fillStyle='#fff'; ctx.font='bold 15px Cinzel, serif'; ctx.textAlign='center';
 ctx.fillText(`${russia.pendingSoldiers}`, 78, H-48);
 
 // Plus button
 const canIncrease = russia.bank > 0;
-ctx.fillStyle = canIncrease ? ‘#1a2a1a’ : ‘#1a1a1a’;
+ctx.fillStyle = canIncrease ? '#1a2a1a' : '#1a1a1a';
 ctx.beginPath(); ctx.roundRect(BTN_PLUS.x,BTN_PLUS.y,BTN_PLUS.w,BTN_PLUS.h,5); ctx.fill();
-ctx.fillStyle = canIncrease ? ‘#88ff88’ : ‘#555’;
-ctx.font=’bold 16px serif’;
-ctx.fillText(‘+’, BTN_PLUS.x+BTN_PLUS.w/2, BTN_PLUS.y+20);
+ctx.fillStyle = canIncrease ? '#88ff88' : '#555';
+ctx.font='bold 16px serif';
+ctx.fillText('+', BTN_PLUS.x+BTN_PLUS.w/2, BTN_PLUS.y+20);
 
 // Send button
 const canSend = russia.pendingSoldiers > 0;
-ctx.fillStyle = canSend ? ‘#1a4a1a’ : ‘#111’;
+ctx.fillStyle = canSend ? '#1a4a1a' : '#111';
 ctx.beginPath(); ctx.roundRect(BTN_SEND.x,BTN_SEND.y,BTN_SEND.w,BTN_SEND.h,6); ctx.fill();
-if(canSend){ ctx.strokeStyle=’#3a7a3a’; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(BTN_SEND.x,BTN_SEND.y,BTN_SEND.w,BTN_SEND.h,6); ctx.stroke(); }
-ctx.fillStyle = canSend ? ‘#ccffcc’ : ‘#444’;
-ctx.font=’bold 12px Cinzel, serif’; ctx.textAlign=’center’;
-ctx.fillText(‘⚔ Send into Battle’, BTN_SEND.x+BTN_SEND.w/2, BTN_SEND.y+17);
+if(canSend){ ctx.strokeStyle='#3a7a3a'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(BTN_SEND.x,BTN_SEND.y,BTN_SEND.w,BTN_SEND.h,6); ctx.stroke(); }
+ctx.fillStyle = canSend ? '#ccffcc' : '#444';
+ctx.font='bold 12px Cinzel, serif'; ctx.textAlign='center';
+ctx.fillText('⚔ Send into Battle', BTN_SEND.x+BTN_SEND.w/2, BTN_SEND.y+17);
 }
 
 function drawProgressBar(){
 const barW = 300, barH = 14;
 const bx = W/2-barW/2, by = H-28;
-ctx.fillStyle=‘rgba(0,0,0,0.6)’;
+ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(bx-4,by-4,barW+8,barH+8,6); ctx.fill();
 
-ctx.fillStyle=’#333’; ctx.fillRect(bx,by,barW,barH);
+ctx.fillStyle='#333'; ctx.fillRect(bx,by,barW,barH);
 
 // Napoleon position on bar
 const prog = Math.max(0, Math.min(1, napoleon.x / MOSCOW_X));
-ctx.fillStyle=’#2a3a6a’; ctx.fillRect(bx, by, barW*prog, barH);
+ctx.fillStyle='#2a3a6a'; ctx.fillRect(bx, by, barW*prog, barH);
 
 // Moscow marker
-ctx.fillStyle=’#c84020’; ctx.fillRect(bx+barW-3, by, 3, barH);
+ctx.fillStyle='#c84020'; ctx.fillRect(bx+barW-3, by, 3, barH);
 
 // River markers
 for(const r of rivers){
@@ -1586,10 +1797,10 @@ ctx.fillStyle=COL.water; ctx.fillRect(bx+barW*rp-1, by, 2, barH);
 }
 
 // Labels
-ctx.fillStyle=’#aaa’; ctx.font=‘9px “IM Fell English”, serif’; ctx.textAlign=‘left’;
-ctx.fillText(‘Niemen’, bx-2, by-2);
-ctx.textAlign=‘right’;
-ctx.fillText(‘Moscow’, bx+barW+2, by-2);
+ctx.fillStyle='#aaa'; ctx.font='9px "IM Fell English", serif'; ctx.textAlign='left';
+ctx.fillText('Niemen', bx-2, by-2);
+ctx.textAlign='right';
+ctx.fillText('Moscow', bx+barW+2, by-2);
 }
 
 function drawMessages(){
@@ -1597,12 +1808,12 @@ let my = H/2 - 50;
 for(const msg of messages){
 const alpha = Math.min(1, msg.life / 500);
 ctx.save(); ctx.globalAlpha=alpha;
-ctx.fillStyle=‘rgba(0,0,0,0.7)’;
+ctx.fillStyle='rgba(0,0,0,0.7)';
 const tw = ctx.measureText(msg.text).width || 300;
 ctx.beginPath(); ctx.roundRect(W/2-tw/2-20, my-8, tw+40, 26, 6); ctx.fill();
-ctx.fillStyle=’#ffeedd’;
-ctx.font=‘13px “IM Fell English”, serif’;
-ctx.textAlign=‘center’;
+ctx.fillStyle='#ffeedd';
+ctx.font='13px "IM Fell English", serif';
+ctx.textAlign='center';
 ctx.fillText(msg.text, W/2, my+8);
 ctx.restore();
 my += 32;
@@ -1610,103 +1821,102 @@ my += 32;
 }
 
 function drawMoscowChoice(){
-ctx.fillStyle=‘rgba(0,0,0,0.7)’;
+ctx.fillStyle='rgba(0,0,0,0.7)';
 ctx.fillRect(0,0,W,H);
 
-ctx.fillStyle=’#c8a040’;
-ctx.font=‘bold 26px Cinzel, serif’; ctx.textAlign=‘center’;
-ctx.fillText(‘Napoleon has reached Moscow!’, W/2, H/2-60);
+ctx.fillStyle='#c8a040';
+ctx.font='bold 26px Cinzel, serif'; ctx.textAlign='center';
+ctx.fillText('Napoleon has reached Moscow!', W/2, H/2-60);
 
-ctx.fillStyle=’#ccc’; ctx.font=‘15px “IM Fell English”, serif’;
-ctx.fillText(‘The city is yours to defend or destroy.’, W/2, H/2-30);
-ctx.fillText(‘Will you burn Moscow to deny Napoleon shelter and supplies?’, W/2, H/2-8);
+ctx.fillStyle='#ccc'; ctx.font='15px "IM Fell English", serif';
+ctx.fillText('The city is yours to defend or destroy.', W/2, H/2-30);
+ctx.fillText('Will you burn Moscow to deny Napoleon shelter and supplies?', W/2, H/2-8);
 
 const btnY = H/2+20;
 
 // BURN button
-ctx.fillStyle=’#8a2020’;
+ctx.fillStyle='#8a2020';
 ctx.beginPath(); ctx.roundRect(W/2-220, btnY, 200, 50, 8); ctx.fill();
-ctx.fillStyle=’#ff8040’; ctx.font=‘bold 18px Cinzel, serif’;
-ctx.fillText(‘🔥 Burn Moscow’, W/2-120, btnY+32);
+ctx.fillStyle='#ff8040'; ctx.font='bold 18px Cinzel, serif';
+ctx.fillText('🔥 Burn Moscow', W/2-120, btnY+32);
 
 // SURRENDER button
-ctx.fillStyle=’#2a4a2a’;
+ctx.fillStyle='#2a4a2a';
 ctx.beginPath(); ctx.roundRect(W/2+20, btnY, 200, 50, 8); ctx.fill();
-ctx.fillStyle=’#80c080’; ctx.font=‘bold 18px Cinzel, serif’;
-ctx.fillText(‘Surrender’, W/2+120, btnY+32);
+ctx.fillStyle='#80c080'; ctx.font='bold 18px Cinzel, serif';
+ctx.fillText('Surrender', W/2+120, btnY+32);
 }
 
 function getSeasonLabel(){
 const progress = napoleon.x / MOSCOW_X;
-if(phase===‘retreat’){
+if(phase==='retreat'){
 const rp = retreatTime / 120000;
-if(rp < 0.2) return ‘October 1812’;
-if(rp < 0.5) return ‘November 1812’;
-return ‘December 1812’;
+if(rp < 0.2) return 'October 1812';
+if(rp < 0.5) return 'November 1812';
+return 'December 1812';
 }
-if(progress < 0.15) return ‘June 1812’;
-if(progress < 0.35) return ‘July 1812’;
-if(progress < 0.55) return ‘August 1812’;
-if(progress < 0.75) return ‘September 1812’;
-return ‘September 1812’;
+if(progress < 0.15) return 'June 1812';
+if(progress < 0.35) return 'July 1812';
+if(progress < 0.55) return 'August 1812';
+if(progress < 0.75) return 'September 1812';
+return 'September 1812';
 }
 
-// ── TITLE SCREEN ──
+// -- TITLE SCREEN --
 function drawTitle(){
 // Dark background
 const g = ctx.createLinearGradient(0,0,0,H);
-g.addColorStop(0,’#0a0a18’);
-g.addColorStop(0.5,’#1a1a2a’);
-g.addColorStop(1,’#0a0a10’);
+g.addColorStop(0,'#0a0a18');
+g.addColorStop(0.5,'#1a1a2a');
+g.addColorStop(1,'#0a0a10');
 ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
 
 // Snow
-ctx.fillStyle=‘rgba(255,255,255,0.4)’;
+ctx.fillStyle='rgba(255,255,255,0.4)';
 for(let i=0;i<80;i++){
 const sx=(gameTime*0.015*(i%3+1)+i*73)%W;
 const sy=(gameTime*0.02*(i%2+1)+i*31)%H;
 ctx.fillRect(sx,sy,2,2);
 }
 
-ctx.textAlign=‘center’;
+ctx.textAlign='center';
 
 // Title
-ctx.fillStyle=’#c8a040’;
-ctx.font=‘bold 44px Cinzel, serif’;
-ctx.fillText(‘1812’, W/2, H/2-100);
+ctx.fillStyle='#c8a040';
+ctx.font='bold 44px Cinzel, serif';
+ctx.fillText('1812', W/2, H/2-100);
 
-ctx.fillStyle=’#8a7a5a’;
-ctx.font=‘italic 18px “IM Fell English”, serif’;
-ctx.fillText(‘The Retreat Will Teach Them’, W/2, H/2-65);
+ctx.fillStyle='#8a7a5a';
+ctx.font='italic 18px "IM Fell English", serif';
+ctx.fillText('The Retreat Will Teach Them', W/2, H/2-65);
 
-ctx.fillStyle=’#888’;
-ctx.font=‘14px “IM Fell English”, serif’;
-ctx.fillText(‘You are Russia. Napoleon marches on Moscow with 100,000 men.’, W/2, H/2-25);
-ctx.fillText(‘Deploy soldiers. Burn farms. Destroy bridges.’, W/2, H/2);
-ctx.fillText(‘Let General Winter finish what your army cannot.’, W/2, H/2+25);
+ctx.fillStyle='#888';
+ctx.font='14px "IM Fell English", serif';
+ctx.fillText('You are Russia. Napoleon marches on Moscow with 100,000 men.', W/2, H/2-25);
+ctx.fillText('Deploy soldiers. Burn farms. Destroy bridges.', W/2, H/2);
+ctx.fillText('Let General Winter finish what your army cannot.', W/2, H/2+25);
 
 // Controls
-ctx.fillStyle=’#666’; ctx.font=’12px “IM Fell English”, serif’;
-ctx.fillText(‘Use + to add soldiers to your force, then Send into Battle  ·  WASD to move  ·  SPACE to attack’, W/2, H/2+55);
+ctx.fillStyle='#666'; ctx.font='12px "IM Fell English", serif';
+ctx.fillText('Use + to add soldiers to your force, then Send into Battle  ·  WASD to move  ·  SPACE to attack', W/2, H/2+55);
 
 // Start button
-ctx.fillStyle=’#2a5a2a’;
+ctx.fillStyle='#2a5a2a';
 ctx.beginPath(); ctx.roundRect(W/2-120, H/2+80, 240, 50, 10); ctx.fill();
-ctx.strokeStyle=’#4a8a4a’; ctx.lineWidth=2;
+ctx.strokeStyle='#4a8a4a'; ctx.lineWidth=2;
 ctx.beginPath(); ctx.roundRect(W/2-120, H/2+80, 240, 50, 10); ctx.stroke();
-ctx.fillStyle=’#ddd’; ctx.font=‘bold 20px Cinzel, serif’;
-ctx.fillText(‘Begin the Campaign’, W/2, H/2+112);
+ctx.fillStyle='#ddd'; ctx.font='bold 20px Cinzel, serif';
+ctx.fillText('Begin the Campaign', W/2, H/2+112);
 }
 
-// ── VICTORY / DEFEAT SCREENS ──
+// -- VICTORY / DEFEAT SCREENS --
 function drawEndScreen(){
-ctx.fillStyle=‘rgba(0,0,0,0.8)’; ctx.fillRect(0,0,W,H);
-ctx.textAlign=‘center’;
+ctx.fillStyle='rgba(0,0,0,0.8)'; ctx.fillRect(0,0,W,H);
+ctx.textAlign='center';
 
-if(phase===‘gameover_win’){
+if(phase==='gameover_win'){
 const aliveF = napoleon.soldiers.filter(s=>s.alive&&!s.dying).length;
 
-```
 ctx.fillStyle='#c8a040'; ctx.font='bold 32px Cinzel, serif';
 ctx.fillText('Russia Endures', W/2, H/2-100);
 
@@ -1720,36 +1930,32 @@ ctx.fillText(`You deployed ${russia.totalDeployed} Russian soldiers.`, W/2, H/2-
 
 ctx.fillStyle='#888'; ctx.font='italic 14px "IM Fell English", serif';
 ctx.fillText('It was not your army that defeated Napoleon.', W/2, H/2-5);
-ctx.fillText('It was the land itself — the burned fields, the broken bridges, the frozen roads.', W/2, H/2+15);
+ctx.fillText('It was the land itself  - the burned fields, the broken bridges, the frozen roads.', W/2, H/2+15);
 ctx.fillText('The system was unwinnable. Napoleon just hadn\'t realized it yet.', W/2, H/2+35);
 
 ctx.fillStyle='#2a5a2a';
 ctx.beginPath(); ctx.roundRect(W/2-100,H/2+65,200,45,8); ctx.fill();
 ctx.fillStyle='#ddd'; ctx.font='bold 16px Cinzel, serif';
 ctx.fillText('Play Again', W/2, H/2+94);
-```
 
 }
-else if(phase===‘napoleon_wins’){
-ctx.fillStyle=’#4a2a2a’; ctx.font=‘bold 28px Cinzel, serif’;
-ctx.fillText(‘Napoleon Triumphant’, W/2, H/2-60);
-ctx.fillStyle=’#aaa’; ctx.font=‘15px “IM Fell English”, serif’;
-ctx.fillText(‘Moscow is his. Without scorched earth, he resupplies and holds the city.’, W/2, H/2-25);
-ctx.fillText(‘History teaches: the only winning move was to burn it all.’, W/2, H/2);
+else if(phase==='napoleon_wins'){
+ctx.fillStyle='#4a2a2a'; ctx.font='bold 28px Cinzel, serif';
+ctx.fillText('Napoleon Triumphant', W/2, H/2-60);
+ctx.fillStyle='#aaa'; ctx.font='15px "IM Fell English", serif';
+ctx.fillText('Moscow is his. Without scorched earth, he resupplies and holds the city.', W/2, H/2-25);
+ctx.fillText('History teaches: the only winning move was to burn it all.', W/2, H/2);
 
-```
 ctx.fillStyle='#6a2a2a';
 ctx.beginPath(); ctx.roundRect(W/2-100,H/2+65,200,45,8); ctx.fill();
 ctx.fillStyle='#ddd'; ctx.font='bold 16px Cinzel, serif';
 ctx.fillText('Try Again', W/2, H/2+94);
-```
 
 }
-else if(phase===‘burned’){
-ctx.fillStyle=’#c85020’; ctx.font=‘bold 28px Cinzel, serif’;
-ctx.fillText(‘Moscow Burns’, W/2, H/2-80);
+else if(phase==='burned'){
+ctx.fillStyle='#c85020'; ctx.font='bold 28px Cinzel, serif';
+ctx.fillText('Moscow Burns', W/2, H/2-80);
 
-```
 ctx.fillStyle='#ccc'; ctx.font='16px "IM Fell English", serif';
 ctx.fillText('The flames consume everything. Napoleon has nothing.', W/2, H/2-40);
 ctx.fillText('No shelter. No food. Winter is coming.', W/2, H/2-15);
@@ -1759,25 +1965,24 @@ ctx.fillStyle='#2a4a6a';
 ctx.beginPath(); ctx.roundRect(W/2-100,H/2+50,200,45,8); ctx.fill();
 ctx.fillStyle='#ddd'; ctx.font='bold 16px Cinzel, serif';
 ctx.fillText('The Retreat Begins', W/2, H/2+79);
-```
 
 }
 }
 
-// ── BRIDGE BUILDING INDICATOR ──
+// -- BRIDGE BUILDING INDICATOR --
 function drawBridgeBuildIndicator(){
 if(!napoleon.buildingBridge) return;
 const sx = napoleon.x - camera.x;
 const pct = napoleon.bridgeBuildTime / napoleon.bridgeBuildMax;
-ctx.fillStyle=‘rgba(0,0,0,0.6)’;
+ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(sx-60, GROUND_Y-20, 120, 20, 4); ctx.fill();
-ctx.fillStyle=’#c8a040’;
+ctx.fillStyle='#c8a040';
 ctx.fillRect(sx-56, GROUND_Y-17, 112*pct, 14);
-ctx.fillStyle=’#fff’; ctx.font=‘10px Cinzel, serif’; ctx.textAlign=‘center’;
-ctx.fillText(‘Building Bridge…’, sx, GROUND_Y-6);
+ctx.fillStyle='#fff'; ctx.font='10px Cinzel, serif'; ctx.textAlign='center';
+ctx.fillText('Building Bridge...', sx, GROUND_Y-6);
 }
 
-// ── UTILITY ──
+// -- UTILITY --
 function lerpColor(a, b, t){
 const ah=parseInt(a.slice(1),16), bh=parseInt(b.slice(1),16);
 const ar=(ah>>16)&0xff, ag=(ah>>8)&0xff, ab=ah&0xff;
@@ -1788,18 +1993,18 @@ const rb=Math.round(ab+(bb-ab)*t);
 return `rgb(${rr},${rg},${rb})`;
 }
 
-// ── MAIN DRAW ──
+// -- MAIN DRAW --
 function draw(){
 ctx.clearRect(0,0,W,H);
 
-if(phase===‘title’){
+if(phase==='title'){
 drawTitle(); return;
 }
-if(phase===‘gameover_win’||phase===‘gameover_lose’||phase===‘napoleon_wins’||phase===‘burned’){
+if(phase==='gameover_win'||phase==='gameover_lose'||phase==='napoleon_wins'||phase==='burned'){
 // Draw the world behind the overlay
-drawSky(); drawGround(); drawRivers(); drawBridges(); drawFarms(); drawMoscow();
+drawSky(); drawParallax(); drawGround(); drawRivers(); drawBridges(); drawFarms(); drawMoscow();
 // Sort and draw all soldiers
-const all = […napoleon.soldiers.filter(s=>s.alive||s.dying), …russia.deployed.filter(s=>s.alive||s.dying)];
+const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying), ...russia.deployed.filter(s=>s.alive||s.dying)];
 all.sort((a,b)=>a.y-b.y);
 for(const s of all){
 if(napoleon.soldiers.includes(s)) drawFrenchSoldier(s);
@@ -1812,6 +2017,7 @@ return;
 }
 
 drawSky();
+drawParallax();
 drawGround();
 drawRivers();
 drawBridges();
@@ -1819,7 +2025,7 @@ drawFarms();
 drawMoscow();
 
 // Z-sort all soldiers
-const all = […napoleon.soldiers.filter(s=>s.alive||s.dying), …russia.deployed.filter(s=>s.alive||s.dying)];
+const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying), ...russia.deployed.filter(s=>s.alive||s.dying)];
 all.push({_isNapoleon:true, y:GROUND_Y+35, alive:true});
 all.sort((a,b)=>a.y-b.y);
 for(const s of all){
@@ -1844,12 +2050,12 @@ ctx.restore();
 }
 }
 
-// ── GAME LOOP ──
+// -- GAME LOOP --
 let lastTs=0;
 function loop(ts){
 const dt=Math.min(50, ts-lastTs);
 lastTs=ts;
-if(phase!==‘title’) update(dt);
+if(phase!=='title') update(dt);
 else gameTime += dt; // for title animation
 draw();
 requestAnimationFrame(loop);
