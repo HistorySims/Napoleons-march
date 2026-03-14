@@ -81,6 +81,8 @@ bank: 50,
 deployed: [],
 controlledIdx: -1,
 totalDeployed: 0,
+pendingSoldiers: 0,
+inBattle: false,
 };
 
 // Map features
@@ -91,9 +93,8 @@ let mapFeatures = [];
 
 // Player input
 let keys = {};
-let mouse = { x:0, y:0, down:false, dragSoldier:false };
+let mouse = { x:0, y:0, down:false };
 let dragFromBank = false;
-let dragPreviewX = 0, dragPreviewY = 0;
 const isMobile = ‘ontouchstart’ in window;
 const touch = { jx:0, jy:0, jActive:false, jSX:0, jSY:0, attack:false, atkId:-1, jId:-1 };
 const JR=48, JCX=75, JCY=H-85, ACX=W-75, ACY=H-85, AR=46;
@@ -137,12 +138,11 @@ e.preventDefault();
 for(const t of e.changedTouches){
 const [tx,ty]=toCanvas(t.clientX,t.clientY);
 
-```
 // Title / end screen taps
 if(phase==='title'||phase==='burned'||phase==='napoleon_wins'||phase==='gameover_win'||phase==='gameover_lose'
   ||(phase==='playing'&&napoleon.atMoscow)){
   handleClick(tx,ty);
-  return;
+  continue;
 }
 
 // Attack button area (right side, bottom)
@@ -150,22 +150,14 @@ if(tx > W-140 && ty > H-150){
   touch.attack=true; touch.atkId=t.identifier;
   continue;
 }
-// Joystick area (left side, bottom)
-if(tx < 160 && ty > H-160){
+// Joystick area (left side, bottom) — only when inBattle
+if(russia.inBattle && tx < 160 && ty > H-160){
   touch.jActive=true; touch.jId=t.identifier;
   touch.jSX=tx; touch.jSY=ty; touch.jx=0; touch.jy=0;
   continue;
 }
-// Deploy drag from bank area
-if(ty > H-80 && tx < 220 && russia.bank > 0 && (phase==='playing'||phase==='retreat')){
-  dragFromBank=true;
-  mouse.x=tx; mouse.y=ty;
-  continue;
-}
-// Tap to select soldier
-mouse.x=tx; mouse.y=ty;
+// Deploy box button taps
 handleClick(tx,ty);
-```
 
 }
 },{passive:false});
@@ -180,35 +172,17 @@ const len=Math.sqrt(dx*dx+dy*dy);
 if(len>JR){dx*=JR/len;dy*=JR/len;}
 touch.jx=dx/JR; touch.jy=dy/JR;
 }
-if(dragFromBank){
-mouse.x=tx; mouse.y=ty;
-}
 }
 },{passive:false});
 
 canvas.addEventListener(‘touchend’, e => {
 e.preventDefault();
 for(const t of e.changedTouches){
-const [tx,ty]=toCanvas(t.clientX,t.clientY);
 if(t.identifier===touch.jId){
 touch.jActive=false; touch.jx=0; touch.jy=0; touch.jId=-1;
 }
 if(t.identifier===touch.atkId){
 touch.attack=false; touch.atkId=-1;
-}
-if(dragFromBank){
-dragFromBank=false;
-const worldX=tx+camera.x;
-const worldY=Math.max(LANE_TOP+10,Math.min(LANE_BOT-10,ty));
-if(russia.bank>0 && worldX>camera.x+50){
-const s=createRussianSoldier(worldX,worldY);
-if(russia.deployed.length===0||russia.controlledIdx<0){
-s.controlled=true; russia.controlledIdx=russia.deployed.length;
-}
-russia.deployed.push(s); russia.bank–;
-russia.totalDeployed++;
-addMessage(‘Soldier deployed!’,1500);
-}
 }
 }
 },{passive:false});
@@ -241,20 +215,23 @@ burnTimer: 0,
 }
 
 // ── ENTITY CREATION ──
-function createFrenchSoldier(x, y){
+function createFrenchSoldier(x, y, role){
 return {
 x, y: y || GROUND_Y + 20 + Math.random()*60,
 hp: 100, maxHp: 100,
 alive: true,
 dying: false, dyingMs: 0,
-deathType: null, // ‘combat’,‘freeze’,‘disease’
+deathType: null,
 speed: napoleon.speed + (Math.random()-0.5)*8,
 walkTimer: Math.random()*1000,
 facing: 1,
-frozen: 0, // 0-1 how frozen
+frozen: 0,
 diseased: false,
 flash: 0,
-offsetY: (Math.random()-0.5)*30,
+offsetY: (Math.random()-0.5)*40,
+role: role || ‘column’, // ‘vanguard’,’column’,’raider’
+raidTarget: null,
+raidReturning: false,
 id: Math.random(),
 };
 }
@@ -279,9 +256,24 @@ id: Math.random(),
 
 function initNapoleonArmy(){
 napoleon.soldiers = [];
-for(let i=0; i<100; i++){
-const x = 120 + Math.random()*300;
-napoleon.soldiers.push(createFrenchSoldier(x));
+// Vanguard: advance scouts spread ahead of Napoleon
+for(let i=0; i<12; i++){
+const x = 260 + Math.random()*100;
+const s = createFrenchSoldier(x, undefined, 'vanguard');
+s.offsetY = (Math.random()-0.5)*50;
+napoleon.soldiers.push(s);
+}
+// Main column: stretched behind Napoleon
+for(let i=0; i<78; i++){
+const x = 80 + Math.random()*180;
+const s = createFrenchSoldier(x, undefined, 'column');
+napoleon.soldiers.push(s);
+}
+// Raiders: soldiers that visibly detach to forage farms
+for(let i=0; i<10; i++){
+const x = 120 + Math.random()*150;
+const s = createFrenchSoldier(x, undefined, 'raider');
+napoleon.soldiers.push(s);
 }
 napoleon.food = 800;
 napoleon.x = 200;
@@ -291,39 +283,10 @@ napoleon.atMoscow = false;
 
 // ── HANDLE INPUT ──
 function handleMouseDown(mx, my){
-if(phase===‘playing’ || phase===‘retreat’){
-// Check if clicking on soldier bank area
-if(my > H-80 && mx < 220 && russia.bank > 0 && phase===‘playing’){
-dragFromBank = true;
-dragPreviewX = mx; dragPreviewY = my;
-return;
-}
-// Check if clicking on a controlled soldier to move
-if(russia.controlledIdx >= 0){
-// Will handle movement in update
-}
-}
+// no drag-to-deploy; clicks handled by handleClick
 }
 
 function handleMouseUp(mx, my){
-if(dragFromBank && (phase===‘playing’||phase===‘retreat’)){
-dragFromBank = false;
-// Deploy soldier at world position
-const worldX = mx + camera.x;
-const worldY = Math.max(LANE_TOP+10, Math.min(LANE_BOT-10, my));
-if(russia.bank > 0 && worldX > camera.x + 50){
-const s = createRussianSoldier(worldX, worldY);
-if(russia.deployed.length === 0 || russia.controlledIdx < 0){
-s.controlled = true;
-russia.controlledIdx = russia.deployed.length;
-}
-russia.deployed.push(s);
-russia.bank–;
-russia.totalDeployed++;
-addMessage(‘Soldier deployed! WASD to move, Space to attack.’, 2000);
-}
-return;
-}
 }
 
 function handleClick(mx, my){
@@ -366,14 +329,34 @@ phase = ‘napoleon_wins’;
 return;
 }
 
-// Click on deployed Russian soldier to select/control
-if(phase===‘playing’ || phase===‘retreat’){
+// Deploy box buttons
+if((phase===’playing’ || phase===’retreat’) && !russia.inBattle){
+// Minus
+if(mx >= BTN_MINUS.x && mx <= BTN_MINUS.x+BTN_MINUS.w && my >= BTN_MINUS.y && my <= BTN_MINUS.y+BTN_MINUS.h){
+if(russia.pendingSoldiers > 0){ russia.pendingSoldiers--; russia.bank++; }
+return;
+}
+// Plus
+if(mx >= BTN_PLUS.x && mx <= BTN_PLUS.x+BTN_PLUS.w && my >= BTN_PLUS.y && my <= BTN_PLUS.y+BTN_PLUS.h){
+if(russia.bank > 0){ russia.pendingSoldiers++; russia.bank--; }
+return;
+}
+// Send into battle
+if(mx >= BTN_SEND.x && mx <= BTN_SEND.x+BTN_SEND.w && my >= BTN_SEND.y && my <= BTN_SEND.y+BTN_SEND.h){
+if(russia.pendingSoldiers > 0){
+sendIntoBattle();
+}
+return;
+}
+}
+
+// Click on deployed Russian soldier to switch control (only when inBattle)
+if(russia.inBattle && (phase===’playing’ || phase===’retreat’)){
 for(let i=0; i<russia.deployed.length; i++){
 const s = russia.deployed[i];
 if(!s.alive) continue;
 const sx = s.x - camera.x;
 if(Math.abs(mx-sx)<20 && Math.abs(my-s.y)<30){
-// Deselect old
 if(russia.controlledIdx>=0 && russia.deployed[russia.controlledIdx])
 russia.deployed[russia.controlledIdx].controlled = false;
 s.controlled = true;
@@ -403,6 +386,33 @@ color: Math.random()>0.5 ? COL.fire : COL.fireGlow,
 addMessage(‘Moscow burns! Napoleon has nothing. He must retreat into winter.’, 5000);
 }
 
+function sendIntoBattle(){
+if(russia.pendingSoldiers <= 0) return;
+// Deselect previous controlled
+if(russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx])
+russia.deployed[russia.controlledIdx].controlled = false;
+russia.controlledIdx = -1;
+
+// Spawn soldiers on the right side of the screen (just inside view)
+const spawnBaseX = camera.x + W - 80;
+for(let i=0; i<russia.pendingSoldiers; i++){
+const sy = LANE_TOP + 20 + Math.random() * (LANE_BOT - LANE_TOP - 40);
+const sx = spawnBaseX - i * 18 + (Math.random()-0.5)*10;
+const s = createRussianSoldier(Math.max(camera.x+20, sx), sy);
+if(i === 0){
+s.controlled = true;
+russia.controlledIdx = russia.deployed.length;
+}
+russia.deployed.push(s);
+russia.totalDeployed++;
+}
+const count = russia.pendingSoldiers;
+russia.pendingSoldiers = 0;
+russia.inBattle = true;
+addMessage(`${count} soldier${count>1?'s':''} deployed! WASD to move, Space to attack.`, 2500);
+addMessage('Camera follows you. Raid farms, attack soldiers!', 2000);
+}
+
 function startGame(){
 phase = ‘playing’;
 buildMap();
@@ -411,6 +421,8 @@ russia.bank = 50;
 russia.deployed = [];
 russia.controlledIdx = -1;
 russia.totalDeployed = 0;
+russia.pendingSoldiers = 0;
+russia.inBattle = false;
 temperature = 15;
 gameTime = 0;
 retreatTime = 0;
@@ -419,7 +431,7 @@ effects = [];
 particles = [];
 messages = [];
 addMessage(‘June 1812: Napoleon crosses into Russia with 100,000 men.’, 4000);
-addMessage(‘Drag soldiers from the bank to deploy. You control one directly.’, 5000);
+addMessage(‘Use + to add soldiers, then Send into Battle to deploy them.’, 5000);
 }
 
 function resetGame(){
@@ -464,11 +476,11 @@ updateRussianForces(dt);
 updateCombat(dt);
 updateFarmsAndBridges(dt);
 
-// Camera follows action — weighted between player soldier and Napoleon
-let focusX = napoleon.x - 400;
-if(russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx]?.alive){
+// Camera: follow player only when inBattle and controlled alive
+let focusX = napoleon.x - 350;
+if(russia.inBattle && russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx]?.alive){
 const cs = russia.deployed[russia.controlledIdx];
-focusX = cs.x - 350;
+focusX = cs.x - 500;
 }
 camera.x += (focusX - camera.x) * Math.min(1, dt/300);
 camera.x = Math.max(0, Math.min(MAP_WIDTH - W, camera.x));
@@ -558,9 +570,9 @@ updateCombat(dt);
 updateDying(dt);
 
 // Camera
-let focusX = napoleon.x - 400;
-if(russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx]?.alive){
-focusX = russia.deployed[russia.controlledIdx].x - 350;
+let focusX = napoleon.x - 350;
+if(russia.inBattle && russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx]?.alive){
+focusX = russia.deployed[russia.controlledIdx].x - 500;
 }
 camera.x += (focusX - camera.x) * Math.min(1, dt/300);
 camera.x = Math.max(0, Math.min(MAP_WIDTH - W, camera.x));
@@ -612,28 +624,63 @@ return;
 // March forward
 napoleon.x += napoleon.speed * (dt/1000);
 
-// Soldiers follow in a loose column
+// Soldiers move according to role
 for(const s of napoleon.soldiers){
 if(!s.alive || s.dying) continue;
-const targetX = napoleon.x - 20 - Math.random()*280;
-s.x += (targetX - s.x) * 0.008 + napoleon.speed * (dt/1000) * 0.85;
 s.walkTimer += dt;
+napoleon.food -= dt * 0.000006;
 
-```
-// Consume food
-napoleon.food -= dt * 0.00008;
-
-// Forage from nearby farms
-for(const farm of farms){
-  if(farm.alive && Math.abs(s.x - farm.x) < 60 && farm.food > 0){
-    const take = Math.min(dt * 0.005, farm.food);
-    farm.food -= take;
-    napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
-    if(farm.food <= 0) farm.alive = false;
+if(s.role === 'vanguard'){
+  // Vanguard runs ahead of Napoleon
+  const targetX = napoleon.x + 60 + s.offsetY * 0.3 + Math.random()*60;
+  s.x += (targetX - s.x) * 0.012 + napoleon.speed * (dt/1000) * 0.95;
+  s.facing = 1;
+} else if(s.role === 'raider'){
+  // Raiders detach to loot nearby farms, then return
+  let nearFarm = null, nearFarmDist = Infinity;
+  for(const farm of farms){
+    if(!farm.alive || farm.food <= 0 || farm.burning) continue;
+    const d = Math.abs(s.x - farm.x);
+    if(d < 350 && farm.x > napoleon.x - 200 && d < nearFarmDist){
+      nearFarm = farm; nearFarmDist = d;
+    }
+  }
+  if(nearFarm && !s.raidReturning){
+    s.raidTarget = nearFarm;
+    const dx = nearFarm.x - s.x;
+    if(Math.abs(dx) > 20){
+      s.x += Math.sign(dx) * s.speed * 1.1 * (dt/1000);
+      s.facing = dx > 0 ? 1 : -1;
+    } else {
+      // At farm — forage
+      const take = Math.min(dt * 0.012, nearFarm.food);
+      nearFarm.food -= take;
+      napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
+      if(nearFarm.food <= 0){ nearFarm.alive = false; s.raidReturning = true; s.raidTarget = null; }
+    }
+  } else {
+    // Return to column
+    s.raidReturning = false;
+    const targetX = napoleon.x - 80 - Math.random()*150;
+    s.x += (targetX - s.x) * 0.01 + napoleon.speed * (dt/1000) * 0.9;
+    s.facing = s.x < napoleon.x ? 1 : -1;
+  }
+} else {
+  // Main column — spread 50-550 behind Napoleon
+  const colPos = (napoleon.soldiers.indexOf(s) % 78) / 78;
+  const targetX = napoleon.x - 50 - colPos * 500 + s.offsetY * 0.2;
+  s.x += (targetX - s.x) * 0.006 + napoleon.speed * (dt/1000) * 0.88;
+  s.facing = 1;
+  // Forage when passing farms
+  for(const farm of farms){
+    if(farm.alive && Math.abs(s.x - farm.x) < 50 && farm.food > 0){
+      const take = Math.min(dt * 0.004, farm.food);
+      farm.food -= take;
+      napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
+      if(farm.food <= 0) farm.alive = false;
+    }
   }
 }
-```
-
 }
 
 // Starvation
@@ -668,6 +715,27 @@ if(s.flash > 0) s.flash -= dt;
 }
 
 function updateRussianForces(dt){
+// If inBattle and controlled soldier died, find next alive or end battle
+if(russia.inBattle){
+const cur = russia.controlledIdx >= 0 ? russia.deployed[russia.controlledIdx] : null;
+if(!cur || (!cur.alive && !cur.dying)){
+// Try to hand control to another alive deployed soldier
+let newCtrl = -1;
+for(let i=0; i<russia.deployed.length; i++){
+if(russia.deployed[i].alive && !russia.deployed[i].dying){ newCtrl=i; break; }
+}
+if(newCtrl >= 0){
+if(russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx])
+russia.deployed[russia.controlledIdx].controlled = false;
+russia.deployed[newCtrl].controlled = true;
+russia.controlledIdx = newCtrl;
+} else {
+russia.inBattle = false;
+russia.controlledIdx = -1;
+addMessage('Your soldiers are gone. Reinforce from the reserve.', 3000);
+}
+}
+}
 const controlled = russia.controlledIdx >= 0 ? russia.deployed[russia.controlledIdx] : null;
 
 // Player-controlled soldier
@@ -1084,64 +1152,100 @@ ctx.save();
 ctx.translate(sx, sy);
 
 if(s.dying){
-const alpha = s.dyingMs / 800;
+const alpha = Math.max(0, s.dyingMs / 800);
 ctx.globalAlpha = alpha;
-if(s.deathType===‘freeze’){
-ctx.filter = `saturate(0.3) brightness(1.5) hue-rotate(200deg)`;
-} else if(s.deathType===‘disease’){
-ctx.filter = `saturate(0.5) hue-rotate(80deg)`;
+if(s.deathType===’freeze’){
+ctx.filter = `saturate(0.2) brightness(1.4) hue-rotate(195deg)`;
+} else if(s.deathType===’disease’){
+ctx.filter = `saturate(0.4) hue-rotate(75deg) brightness(0.8)`;
 }
-ctx.rotate(Math.min(Math.PI/3, (1-alpha)*Math.PI/2) * s.facing);
+ctx.rotate(Math.min(Math.PI/2, (1-alpha)*Math.PI/1.8) * s.facing);
 }
-if(s.flash > 0) ctx.filter = ‘brightness(5)’;
+if(s.flash > 0) ctx.filter = ‘brightness(6)’;
 
-const wk = Math.floor(s.walkTimer/200)%2;
+const wk = Math.floor(s.walkTimer/190)%2;
 const f = s.facing;
+const isRaider = s.role === ‘raider’;
+const isVanguard = s.role === ‘vanguard’;
 
 // Shadow
-ctx.fillStyle=‘rgba(0,0,0,0.2)’;
-ctx.beginPath(); ctx.ellipse(0,2,8,3,0,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’rgba(0,0,0,0.18)’;
+ctx.beginPath(); ctx.ellipse(0,3,8,2.5,0,0,Math.PI*2); ctx.fill();
 
-// Shako (tall hat)
-ctx.fillStyle=’#1a1a2a’;
-ctx.fillRect(-4,-24,8,10);
-ctx.fillStyle=’#2a2a4a’;
-ctx.fillRect(-5,-15,10,3);
-// Plume
-ctx.fillStyle=’#cc2020’;
-ctx.fillRect(-1,-28,3,5);
+// Shako (tall cylindrical hat)
+ctx.fillStyle=’#111120’;
+ctx.fillRect(-4,-26,8,12);
+// Brass top plate
+ctx.fillStyle=’#7a5a10’;
+ctx.fillRect(-4,-26,8,2);
+// Leather peak / visor
+ctx.fillStyle=’#0a0a18’;
+ctx.fillRect(-6,-16,12,3);
+// White band near brim
+ctx.fillStyle=’#cccccc’;
+ctx.fillRect(-4,-14,8,2);
+// Plume (red for line infantry, white for guard, yellow for raider)
+ctx.fillStyle = isRaider ? ‘#cc8800’ : (isVanguard ? ‘#ffffff’ : ‘#cc1a1a’);
+ctx.fillRect(-1,-31,3,6);
+// Cockade (tricolor)
+ctx.fillStyle=’#cc1a1a’; ctx.fillRect(-2,-27,2,2);
+ctx.fillStyle=’#ffffff’; ctx.fillRect(0,-27,2,2);
 
 // Head
-ctx.fillStyle=’#d4a878’;
-ctx.fillRect(-4,-14,8,8);
+ctx.fillStyle=’#c8986a’;
+ctx.fillRect(-3,-13,7,8);
+// Ear
+ctx.fillRect(f>0?3:-4,-12,2,4);
 
-// Body (blue coat)
-ctx.fillStyle = COL.french;
-ctx.fillRect(-6,-6,12,14);
-// White cross-belts
-ctx.strokeStyle=’#ddd’; ctx.lineWidth=1.5;
-ctx.beginPath(); ctx.moveTo(-5,-5); ctx.lineTo(5,7); ctx.stroke();
-ctx.beginPath(); ctx.moveTo(5,-5); ctx.lineTo(-5,7); ctx.stroke();
+// Dark blue coat body
+ctx.fillStyle=’#16246a’;
+ctx.fillRect(-6,-5,12,13);
+// Red collar / lapel
+ctx.fillStyle=’#aa1a1a’;
+ctx.fillRect(-3,-5,6,4);
+// White lapel facing
+ctx.fillStyle=’#d8d8d8’;
+ctx.fillRect(-2,-4,2,3);
+ctx.fillRect(1,-4,2,3);
+// Epaulette (red fringed shoulder decoration)
+ctx.fillStyle=’#cc1a1a’;
+ctx.fillRect(f>0?-6:-2,-5,4,3);
+ctx.fillStyle=’#ffaa00’;
+ctx.fillRect(f>0?-6:-2,-3,4,2);
 
-// Legs (white)
+// White cross-belts (cartridge box X pattern)
+ctx.strokeStyle=’#e0e0e0’; ctx.lineWidth=1.5;
+ctx.beginPath(); ctx.moveTo(-5,-4); ctx.lineTo(4,6); ctx.stroke();
+ctx.beginPath(); ctx.moveTo(4,-4); ctx.lineTo(-5,6); ctx.stroke();
+// Cartridge box (black square at belt)
+ctx.fillStyle=’#222’; ctx.fillRect(-3,4,6,4);
+
+// White breeches (legs)
 const lL=wk?2:-1, lR=wk?-1:2;
-ctx.fillStyle=’#ccc’;
+ctx.fillStyle=’#d8d8d0’;
 ctx.fillRect(-5,8,4,8+lL);
 ctx.fillRect(1,8,4,8+lR);
 
-// Boots
-ctx.fillStyle=’#1a1a1a’;
-ctx.fillRect(-5,15+lL,5,3);
-ctx.fillRect(0,15+lR,5,3);
+// Black tall boots
+ctx.fillStyle=’#111’;
+ctx.fillRect(-6,13+lL,5,5);
+ctx.fillRect(0,13+lR,5,5);
+// Boot top highlight
+ctx.fillStyle=’#333’;
+ctx.fillRect(-6,13+lL,5,2);
+ctx.fillRect(0,13+lR,5,2);
 
-// Musket
-ctx.fillStyle=’#3a2a1a’;
-ctx.fillRect(f*7,-12,2,20);
-// Bayonet
-ctx.fillStyle=’#aaa’;
-ctx.fillRect(f*7,-16,2,5);
+// Musket with long barrel
+ctx.fillStyle=’#2a1a0a’;
+ctx.fillRect(f*7,-14,2,22);
+// Musket lock (side metal parts)
+ctx.fillStyle=’#888’;
+ctx.fillRect(f*7-f*1,-10,f*2,4);
+// Bayonet (long spike)
+ctx.fillStyle=’#aaaaaa’;
+ctx.fillRect(f*7,-20,2,7);
 
-ctx.filter=‘none’;
+ctx.filter=’none’;
 ctx.restore();
 }
 
@@ -1229,44 +1333,97 @@ ctx.save();
 ctx.translate(sx, sy);
 
 const f = napoleon.retreating ? -1 : 1;
+// Subtle walk bob
+const bob = Math.sin(gameTime * 0.004) * 1.2;
 
-// Shadow
-ctx.fillStyle=‘rgba(0,0,0,0.25)’;
-ctx.beginPath(); ctx.ellipse(0,3,10,4,0,0,Math.PI*2); ctx.fill();
+// Shadow (larger — he’s a bigger figure)
+ctx.fillStyle=’rgba(0,0,0,0.28)’;
+ctx.beginPath(); ctx.ellipse(0,4+bob,13,4,0,0,Math.PI*2); ctx.fill();
 
-// Bicorne hat
-ctx.fillStyle=’#0a0a1a’;
+// Bicorne hat (side-on, the iconic look)
+ctx.fillStyle=’#080818’;
 ctx.beginPath();
-ctx.moveTo(-14,-28); ctx.lineTo(0,-35); ctx.lineTo(14,-28);
-ctx.lineTo(10,-24); ctx.lineTo(-10,-24);
+ctx.moveTo(f*-16,-36+bob); ctx.lineTo(f*-4,-30+bob);
+ctx.lineTo(f*-4,-22+bob); ctx.lineTo(f*12,-22+bob);
+ctx.lineTo(f*12,-30+bob); ctx.lineTo(f*16,-36+bob);
+ctx.lineTo(f*0,-42+bob);
+ctx.closePath(); ctx.fill();
+// Hat brim highlight
+ctx.fillStyle=’#1a1a30’;
+ctx.fillRect(f>0?-16:-12,-36+bob, 28, 3);
+// Tricolor cockade
+ctx.fillStyle=’#cc1a1a’; ctx.beginPath(); ctx.arc(f*5,-32+bob,3.5,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#ffffff’; ctx.beginPath(); ctx.arc(f*5,-32+bob,2,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#2244cc’; ctx.beginPath(); ctx.arc(f*5,-32+bob,0.8,0,Math.PI*2); ctx.fill();
+
+// Head (larger than soldiers)
+ctx.fillStyle=’#c8986a’;
+ctx.fillRect(-5,-20+bob,11,12);
+// Ear
+ctx.fillRect(f>0?5:-6,-18+bob,2,5);
+
+// Neck cravat (white)
+ctx.fillStyle=’#e8e8e8’;
+ctx.fillRect(-4,-9+bob,8,3);
+
+// Famous gray greatcoat (redingote grise)
+ctx.fillStyle=’#8a8a8a’;
+ctx.fillRect(-9,-7+bob,18,22);
+// Coat lapels (dark blue underneath)
+ctx.fillStyle=’#1a2460’;
+ctx.beginPath();
+ctx.moveTo(-2,-7+bob); ctx.lineTo(-2,5+bob); ctx.lineTo(2,5+bob); ctx.lineTo(2,-7+bob);
 ctx.fill();
-// Cockade
-ctx.fillStyle=’#cc2020’;
-ctx.beginPath(); ctx.arc(0,-28,3,0,Math.PI*2); ctx.fill();
-
-// Head
-ctx.fillStyle=’#d4a878’;
-ctx.fillRect(-5,-22,10,10);
-
-// Gray overcoat
-ctx.fillStyle=’#6a6a6a’;
-ctx.fillRect(-8,-12,16,18);
-// Medals
+// Coat buttons (gold)
 ctx.fillStyle=COL.gold;
-ctx.fillRect(-5,-10,3,3);
-ctx.fillRect(-5,-6,3,3);
+for(let i=0;i<4;i++) ctx.fillRect(-1,-5+bob+i*4,2,2);
+// Legion d’honneur decoration (red ribbon + star)
+ctx.fillStyle=’#cc1a1a’;
+ctx.fillRect(-7,-3+bob,4,3);
+ctx.fillStyle=COL.gold;
+ctx.beginPath(); ctx.arc(-5,-2+bob,2,0,Math.PI*2); ctx.fill();
+// Epaulettes (gold — general’s rank)
+ctx.fillStyle=COL.gold;
+ctx.fillRect(-10,-6+bob,4,4);
+ctx.fillRect(6,-6+bob,4,4);
+// Epaulette fringe
+ctx.fillStyle=’#a08010’;
+ctx.fillRect(-11,-3+bob,5,3);
+ctx.fillRect(6,-3+bob,5,3);
 
-// Boots
-ctx.fillStyle=’#1a1a1a’;
-ctx.fillRect(-6,6,5,8);
-ctx.fillRect(1,6,5,8);
+// White breeches
+ctx.fillStyle=’#ddddd0’;
+ctx.fillRect(-6,15+bob,5,10);
+ctx.fillRect(1,15+bob,5,10);
 
-// Sword
-ctx.fillStyle=’#bbb’;
-ctx.save(); ctx.translate(f*10,-6); ctx.rotate(f*0.3);
-ctx.fillRect(-1,-14,2,18);
-ctx.fillStyle=COL.gold; ctx.fillRect(-3,-2,6,4);
+// Tall black cavalry boots (signature Napoleon boots)
+ctx.fillStyle=’#111’;
+ctx.fillRect(-7,20+bob,6,12);
+ctx.fillRect(1,20+bob,6,12);
+// Boot top (slightly lighter)
+ctx.fillStyle=’#2a2a2a’;
+ctx.fillRect(-7,20+bob,6,3);
+ctx.fillRect(1,20+bob,6,3);
+// Boot spur
+ctx.fillStyle=’#888’;
+ctx.fillRect(f>0?-7:5,29+bob,2,3);
+
+// Sword (at side)
+ctx.save();
+ctx.translate(f*11,-2+bob);
+ctx.rotate(f*0.25);
+ctx.fillStyle=’#aaaaaa’;
+ctx.fillRect(-1,-16,2,22);
+ctx.fillStyle=COL.gold;
+ctx.fillRect(-4,-2,8,4);
+ctx.fillRect(-2,-4,4,3);
 ctx.restore();
+
+// Name label
+ctx.fillStyle=’rgba(0,0,0,0.55)’;
+ctx.beginPath(); ctx.roundRect(-24,-56+bob,48,14,3); ctx.fill();
+ctx.fillStyle=’#ffd060’; ctx.font=’bold 9px Cinzel, serif’; ctx.textAlign=’center’;
+ctx.fillText(‘NAPOLÉON’, 0, -46+bob);
 
 ctx.restore();
 }
@@ -1308,8 +1465,8 @@ ctx.fillText(`Russian Army`, 16, 28);
 ctx.fillStyle=’#aaa’; ctx.font=‘11px “IM Fell English”, serif’;
 ctx.fillText(`Deployed: ${aliveR}  |  Reserve: ${russia.bank}`, 16, 46);
 
-// Soldier bank (bottom)
-drawSoldierBank();
+// Deploy box (bottom left)
+drawDeployBox();
 
 // March progress bar (bottom center)
 drawProgressBar();
@@ -1322,13 +1479,13 @@ if(napoleon.atMoscow && phase===‘playing’){
 drawMoscowChoice();
 }
 
-// Drag preview
-if(dragFromBank){
-ctx.save(); ctx.globalAlpha=0.6;
-ctx.fillStyle=COL.russian;
-ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 10, 0, Math.PI*2); ctx.fill();
-ctx.fillStyle=’#ddd’; ctx.fillRect(mouse.x-3, mouse.y-18, 6, 12);
-ctx.restore();
+// inBattle indicator
+if(russia.inBattle){
+ctx.fillStyle=’rgba(0,80,0,0.55)’;
+ctx.beginPath(); ctx.roundRect(8,H-36,180,28,6); ctx.fill();
+ctx.fillStyle=’#aaffaa’; ctx.font=’bold 11px Cinzel, serif’; ctx.textAlign=’left’;
+const cIdx = russia.controlledIdx;
+ctx.fillText(`⚔ In Battle  WASD+SPACE`, 16, H-17);
 }
 
 // Mobile virtual controls
@@ -1352,29 +1509,59 @@ ctx.restore();
 }
 }
 
-function drawSoldierBank(){
-if(russia.bank <= 0) return;
-ctx.fillStyle=‘rgba(0,0,0,0.65)’;
-ctx.beginPath(); ctx.roundRect(8,H-72,210,64,8); ctx.fill();
-ctx.strokeStyle=COL.russianLight; ctx.lineWidth=1;
-ctx.beginPath(); ctx.roundRect(8,H-72,210,64,8); ctx.stroke();
+// Store button rects for click detection
+const DEPLOY_BOX = { x:8, y:H-110, w:220, h:102 };
+const BTN_MINUS = { x:18, y:H-68, w:30, h:28 };
+const BTN_PLUS  = { x:108, y:H-68, w:30, h:28 };
+const BTN_SEND  = { x:18, y:H-34, w:200, h:26 };
 
-ctx.fillStyle=’#ccc’; ctx.font=‘11px “IM Fell English”, serif’; ctx.textAlign=‘left’;
-ctx.fillText(‘Drag to deploy soldiers:’, 16, H-56);
+function drawDeployBox(){
+if(russia.inBattle) return; // Hide when in battle
+// Panel
+ctx.fillStyle=’rgba(10,20,10,0.82)’;
+ctx.beginPath(); ctx.roundRect(DEPLOY_BOX.x,DEPLOY_BOX.y,DEPLOY_BOX.w,DEPLOY_BOX.h,10); ctx.fill();
+ctx.strokeStyle=COL.russianLight; ctx.lineWidth=1.5;
+ctx.beginPath(); ctx.roundRect(DEPLOY_BOX.x,DEPLOY_BOX.y,DEPLOY_BOX.w,DEPLOY_BOX.h,10); ctx.stroke();
 
-// Mini soldier icons
-const cols = Math.min(russia.bank, 16);
-const rows = Math.ceil(russia.bank / 16);
-for(let r=0; r<rows; r++){
-for(let c=0; c<Math.min(16, russia.bank-r*16); c++){
-const ix = 20 + c*12;
-const iy = H-42 + r*14;
-ctx.fillStyle=COL.russian;
-ctx.fillRect(ix, iy, 8, 10);
-ctx.fillStyle=’#d4a878’;
-ctx.fillRect(ix+1, iy-3, 6, 5);
-}
-}
+// Title
+ctx.fillStyle=’#aad4aa’; ctx.font=’bold 11px Cinzel, serif’; ctx.textAlign=’left’;
+ctx.fillText(`Russian Reserve: ${russia.bank}`, 16, H-90);
+
+// Pending label
+ctx.fillStyle=’#ddd’; ctx.font=’11px “IM Fell English”, serif’;
+ctx.fillText(‘Send into battle:’, 16, H-74);
+
+// Minus button
+const canDecrease = russia.pendingSoldiers > 0;
+ctx.fillStyle = canDecrease ? ‘#3a2a2a’ : ‘#1a1a1a’;
+ctx.beginPath(); ctx.roundRect(BTN_MINUS.x,BTN_MINUS.y,BTN_MINUS.w,BTN_MINUS.h,5); ctx.fill();
+ctx.fillStyle = canDecrease ? ‘#ff8888’ : ‘#555’;
+ctx.font=’bold 16px serif’; ctx.textAlign=’center’;
+ctx.fillText(‘−’, BTN_MINUS.x+BTN_MINUS.w/2, BTN_MINUS.y+20);
+
+// Count display
+ctx.fillStyle=’rgba(0,0,0,0.5)’;
+ctx.fillRect(52,H-68,52,28);
+ctx.strokeStyle=’#444’; ctx.lineWidth=1; ctx.strokeRect(52,H-68,52,28);
+ctx.fillStyle=’#fff’; ctx.font=’bold 15px Cinzel, serif’; ctx.textAlign=’center’;
+ctx.fillText(`${russia.pendingSoldiers}`, 78, H-48);
+
+// Plus button
+const canIncrease = russia.bank > 0;
+ctx.fillStyle = canIncrease ? ‘#1a2a1a’ : ‘#1a1a1a’;
+ctx.beginPath(); ctx.roundRect(BTN_PLUS.x,BTN_PLUS.y,BTN_PLUS.w,BTN_PLUS.h,5); ctx.fill();
+ctx.fillStyle = canIncrease ? ‘#88ff88’ : ‘#555’;
+ctx.font=’bold 16px serif’;
+ctx.fillText(‘+’, BTN_PLUS.x+BTN_PLUS.w/2, BTN_PLUS.y+20);
+
+// Send button
+const canSend = russia.pendingSoldiers > 0;
+ctx.fillStyle = canSend ? ‘#1a4a1a’ : ‘#111’;
+ctx.beginPath(); ctx.roundRect(BTN_SEND.x,BTN_SEND.y,BTN_SEND.w,BTN_SEND.h,6); ctx.fill();
+if(canSend){ ctx.strokeStyle=’#3a7a3a’; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(BTN_SEND.x,BTN_SEND.y,BTN_SEND.w,BTN_SEND.h,6); ctx.stroke(); }
+ctx.fillStyle = canSend ? ‘#ccffcc’ : ‘#444’;
+ctx.font=’bold 12px Cinzel, serif’; ctx.textAlign=’center’;
+ctx.fillText(‘⚔ Send into Battle’, BTN_SEND.x+BTN_SEND.w/2, BTN_SEND.y+17);
 }
 
 function drawProgressBar(){
@@ -1499,8 +1686,8 @@ ctx.fillText(‘Deploy soldiers. Burn farms. Destroy bridges.’, W/2, H/2);
 ctx.fillText(‘Let General Winter finish what your army cannot.’, W/2, H/2+25);
 
 // Controls
-ctx.fillStyle=’#666’; ctx.font=‘12px “IM Fell English”, serif’;
-ctx.fillText(‘WASD to move your soldier  ·  SPACE to attack / burn / destroy  ·  Drag from bank to deploy’, W/2, H/2+55);
+ctx.fillStyle=’#666’; ctx.font=’12px “IM Fell English”, serif’;
+ctx.fillText(‘Use + to add soldiers to your force, then Send into Battle  ·  WASD to move  ·  SPACE to attack’, W/2, H/2+55);
 
 // Start button
 ctx.fillStyle=’#2a5a2a’;
@@ -1644,8 +1831,6 @@ else drawRussianSoldier(s);
 drawParticles();
 drawBridgeBuildIndicator();
 drawHUD();
-
-if(napoleon.atMoscow && phase===‘playing’) drawMoscowChoice();
 }
 
 function drawParticles(){
