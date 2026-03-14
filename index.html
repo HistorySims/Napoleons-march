@@ -137,6 +137,9 @@ atMoscow: false,
 buildingBridge: false,
 bridgeBuildTime: 0,
 bridgeBuildMax: 3000,
+wagons: [],         // supply wagons following the army
+workerIds: [],      // ids of soldiers assigned as bridge workers
+buildBridgeX: 0,    // x of bridge being built
 };
 
 // Russian forces
@@ -322,11 +325,17 @@ walkTimer: Math.random()*1000,
 facing: 1,
 frozen: 0,
 diseased: false,
+sickness: 0,        // 0-1 green disease progression
 flash: 0,
+knockVX: 0,         // knockback velocity x
+knockTimer: 0,
 offsetY: (Math.random()-0.5)*40,
-role: role || 'column', // 'vanguard','column','raider'
+role: role || 'column', // 'vanguard','column','raider','worker'
 raidTarget: null,
 raidReturning: false,
+carrying: false,    // raider carrying food
+carryFood: 0,
+hammerAngle: 0,     // bridge worker hammer animation
 id: Math.random(),
 };
 }
@@ -334,7 +343,7 @@ id: Math.random(),
 function createRussianSoldier(x, y){
 return {
 x, y: y || GROUND_Y + 30 + Math.random()*50,
-hp: 80, maxHp: 80,
+hp: 100, maxHp: 100,
 alive: true,
 dying: false, dyingMs: 0,
 speed: 55,
@@ -344,6 +353,8 @@ atkCd: 0, atkCdMax: 700,
 atkTimer: 0,
 atkRange: 36,
 flash: 0,
+knockVX: 0,
+knockTimer: 0,
 controlled: false,
 id: Math.random(),
 };
@@ -374,6 +385,14 @@ napoleon.food = 800;
 napoleon.x = 200;
 napoleon.retreating = false;
 napoleon.atMoscow = false;
+napoleon.workerIds = [];
+napoleon.buildBridgeX = 0;
+// Supply wagons: 3 carts following the column
+napoleon.wagons = [
+{x: napoleon.x - 120, y: GROUND_Y + 42, wobble: 0, offsetZ: -8},
+{x: napoleon.x - 200, y: GROUND_Y + 38, wobble: Math.PI, offsetZ: 6},
+{x: napoleon.x - 290, y: GROUND_Y + 44, wobble: Math.PI*0.7, offsetZ: -4},
+];
 }
 
 // -- HANDLE INPUT --
@@ -606,6 +625,11 @@ const targetX = napoleon.x + (s.x - napoleon.x) * 0.3 + (Math.random()-0.5)*2;
 s.x += (targetX - s.x) * 0.01 - napoleon.speed * (dt/1000) * 0.9;
 s.walkTimer += dt;
 
+  // Disease progression continues into retreat
+  if(s.diseased && !s.dying){
+    s.sickness = Math.min(1, s.sickness + dt * 0.0005);
+    if(s.sickness >= 1){ s.dying = true; s.dyingMs = 2000; s.deathType = 'disease'; }
+  }
   // Winter attrition
   if(temperature < -5){
     const freezeChance = Math.abs(temperature + 5) * 0.000008 * dt;
@@ -614,8 +638,13 @@ s.walkTimer += dt;
     }
     const diseaseChance = Math.abs(temperature + 5) * 0.000005 * dt;
     if(Math.random() < diseaseChance && !s.dying){
-      s.dying = true; s.dyingMs = 1500; s.deathType = 'disease'; s.diseased = true;
+      s.diseased = true; s.sickness = Math.max(s.sickness, 0.2);
     }
+  }
+  // New disease spread during retreat when food low
+  const foodRatioR = napoleon.food / napoleon.maxFood;
+  if(foodRatioR < 0.5 && !s.diseased && Math.random() < (0.5-foodRatioR)*0.000015*dt){
+    s.diseased = true; s.sickness = 0.05;
   }
 }
 
@@ -686,14 +715,23 @@ addMessage(`Napoleon escapes with ${aliveF} soldiers of 100,000.`, 5000);
 function updateNapoleonAdvance(dt){
 if(napoleon.stopped || napoleon.atMoscow) return;
 
-// Check for river/bridge
+// Check for river/bridge — assign workers when first stopped
 for(const bridge of bridges){
 if(Math.abs(napoleon.x - bridge.x) < 50){
-if(!bridge.intact){
+if(!bridge.intact && !napoleon.buildingBridge){
 napoleon.stopped = true;
 napoleon.buildingBridge = true;
 napoleon.bridgeBuildTime = 0;
 napoleon.bridgeBuildMax = 5000;
+napoleon.buildBridgeX = bridge.x;
+// Assign 4 nearby column soldiers as workers
+napoleon.workerIds = [];
+for(const s of napoleon.soldiers){
+  if(s.alive && !s.dying && s.role === 'column' && napoleon.workerIds.length < 4){
+    s.role = 'worker';
+    napoleon.workerIds.push(s.id);
+  }
+}
 addMessage('Napoleon must build a bridge! This is your chance!', 3000);
 return;
 }
@@ -703,14 +741,36 @@ return;
 // Bridge building
 if(napoleon.buildingBridge){
 napoleon.bridgeBuildTime += dt;
+
+// Workers animate hammering and move toward bridge
+for(const s of napoleon.soldiers){
+  if(!s.alive || s.dying || s.role !== 'worker') continue;
+  const targetX = napoleon.buildBridgeX + (napoleon.workerIds.indexOf(s.id) - 1.5) * 14;
+  const dx = targetX - s.x;
+  if(Math.abs(dx) > 6){
+    s.x += Math.sign(dx) * 40 * (dt/1000);
+    s.facing = dx > 0 ? 1 : -1;
+    s.walkTimer += dt;
+  }
+  // Hammer animation: oscillates when at bridge
+  if(Math.abs(dx) < 30){
+    s.hammerAngle = Math.sin(gameTime * 0.008 + napoleon.workerIds.indexOf(s.id)) * 1.4;
+  }
+}
+
 if(napoleon.bridgeBuildTime >= napoleon.bridgeBuildMax){
-napoleon.buildingBridge = false;
-napoleon.stopped = false;
-for(const b of bridges){
-if(!b.intact && Math.abs(napoleon.x - b.x) < 100){
-b.intact = true; b.hp = 100; break;
-}
-}
+  napoleon.buildingBridge = false;
+  napoleon.stopped = false;
+  for(const b of bridges){
+    if(!b.intact && Math.abs(napoleon.x - b.x) < 100){
+      b.intact = true; b.hp = 100; break;
+    }
+  }
+  // Return workers to column
+  for(const s of napoleon.soldiers){
+    if(s.role === 'worker'){ s.role = 'column'; s.hammerAngle = 0; }
+  }
+  napoleon.workerIds = [];
 }
 return;
 }
@@ -718,24 +778,48 @@ return;
 // March forward
 napoleon.x += napoleon.speed * (dt/1000);
 
+// Update supply wagons — follow column at fixed offsets
+for(let i = 0; i < napoleon.wagons.length; i++){
+const wag = napoleon.wagons[i];
+const targetX = napoleon.x - 140 - i * 90;
+wag.x += (targetX - wag.x) * 0.03 + napoleon.speed * (dt/1000) * 0.82;
+wag.wobble += dt * 0.003;
+}
+
 // Soldiers move according to role
 for(const s of napoleon.soldiers){
 if(!s.alive || s.dying) continue;
 s.walkTimer += dt;
 napoleon.food -= dt * 0.000006;
 
+// Knockback decay
+if(s.knockTimer > 0){
+  s.x += s.knockVX * (dt/1000);
+  s.knockTimer = Math.max(0, s.knockTimer - dt);
+  if(s.knockTimer <= 0) s.knockVX = 0;
+}
+
+// Disease progression for already-diseased soldiers
+if(s.diseased && !s.dying){
+  s.sickness = Math.min(1, s.sickness + dt * 0.0004);
+  if(s.sickness >= 1){
+    s.dying = true; s.dyingMs = 2000; s.deathType = 'disease';
+  }
+}
+
 if(s.role === 'vanguard'){
-  // Vanguard runs ahead of Napoleon
+  // Vanguard runs well ahead of Napoleon
   const targetX = napoleon.x + 60 + s.offsetY * 0.3 + Math.random()*60;
   s.x += (targetX - s.x) * 0.012 + napoleon.speed * (dt/1000) * 0.95;
   s.facing = 1;
 } else if(s.role === 'raider'){
-  // Raiders detach to loot nearby farms, then return
+  // Raiders race ahead to loot farms, then carry food back
   let nearFarm = null, nearFarmDist = Infinity;
   for(const farm of farms){
     if(!farm.alive || farm.food <= 0 || farm.burning) continue;
     const d = Math.abs(s.x - farm.x);
-    if(d < 350 && farm.x > napoleon.x - 200 && d < nearFarmDist){
+    // Look further ahead than the main column
+    if(d < 600 && farm.x > napoleon.x - 100 && d < nearFarmDist){
       nearFarm = farm; nearFarmDist = d;
     }
   }
@@ -743,24 +827,35 @@ if(s.role === 'vanguard'){
     s.raidTarget = nearFarm;
     const dx = nearFarm.x - s.x;
     if(Math.abs(dx) > 20){
-      s.x += Math.sign(dx) * s.speed * 1.1 * (dt/1000);
+      s.x += Math.sign(dx) * s.speed * 1.5 * (dt/1000); // faster
       s.facing = dx > 0 ? 1 : -1;
     } else {
-      // At farm  - forage
-      const take = Math.min(dt * 0.012, nearFarm.food);
+      // At farm — forage, load cart
+      const take = Math.min(dt * 0.015, nearFarm.food);
       nearFarm.food -= take;
-      napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
-      if(nearFarm.food <= 0){ nearFarm.alive = false; s.raidReturning = true; s.raidTarget = null; }
+      s.carryFood = Math.min(20, s.carryFood + take);
+      if(nearFarm.food <= 0 || s.carryFood >= 18){
+        nearFarm.alive = nearFarm.food > 0;
+        s.raidReturning = true;
+        s.raidTarget = null;
+        s.carrying = s.carryFood > 0;
+      }
     }
   } else {
-    // Return to column
-    s.raidReturning = false;
-    const targetX = napoleon.x - 80 - Math.random()*150;
-    s.x += (targetX - s.x) * 0.01 + napoleon.speed * (dt/1000) * 0.9;
-    s.facing = s.x < napoleon.x ? 1 : -1;
+    // Return to army with food
+    const targetX = napoleon.x - 60 - Math.random()*100;
+    s.x += (targetX - s.x) * 0.015 + napoleon.speed * (dt/1000) * 0.9;
+    s.facing = s.x > napoleon.x ? -1 : 1; // face back toward army
+    // Deposit food when close to column
+    if(Math.abs(s.x - napoleon.x) < 200 && s.carrying){
+      napoleon.food = Math.min(napoleon.maxFood, napoleon.food + s.carryFood);
+      s.carryFood = 0;
+      s.carrying = false;
+      s.raidReturning = false;
+    }
   }
-} else {
-  // Main column  - spread 50-550 behind Napoleon
+} else if(s.role === 'column'){
+  // Main column — spread 50-550 behind Napoleon
   const colPos = (napoleon.soldiers.indexOf(s) % 78) / 78;
   const targetX = napoleon.x - 50 - colPos * 500 + s.offsetY * 0.2;
   s.x += (targetX - s.x) * 0.006 + napoleon.speed * (dt/1000) * 0.88;
@@ -777,14 +872,26 @@ if(s.role === 'vanguard'){
 }
 }
 
+// Disease at <50% food — green sickness spreads through ranks
+const foodRatio = napoleon.food / napoleon.maxFood;
+if(foodRatio < 0.5){
+const sickRate = (0.5 - foodRatio) * 2; // 0 at 50% food → 1 at 0% food
+const infChance = sickRate * 0.000012 * dt;
+for(const s of napoleon.soldiers){
+  if(s.alive && !s.dying && !s.diseased && Math.random() < infChance){
+    s.diseased = true;
+    s.sickness = 0.1; // starts at faint green
+  }
+}
+}
+
 // Starvation
 if(napoleon.food <= 0){
 napoleon.food = 0;
-// Slow deaths from starvation
 for(const s of napoleon.soldiers){
-if(s.alive && !s.dying && Math.random() < 0.000008 * dt){
-s.dying = true; s.dyingMs = 1500; s.deathType = 'disease';
-}
+  if(s.alive && !s.dying && Math.random() < 0.000015 * dt){
+    s.dying = true; s.dyingMs = 1500; s.deathType = 'disease';
+  }
 }
 }
 
@@ -798,6 +905,7 @@ s.dyingMs -= dt;
 if(s.dyingMs <= 0){ s.alive = false; s.dying = false; }
 }
 if(s.flash > 0) s.flash -= dt;
+if(s.knockTimer > 0){ s.x += s.knockVX*(dt/1000); s.knockTimer=Math.max(0,s.knockTimer-dt); if(s.knockTimer<=0)s.knockVX=0; }
 }
 for(const s of russia.deployed){
 if(s.dying){
@@ -805,6 +913,7 @@ s.dyingMs -= dt;
 if(s.dyingMs <= 0){ s.alive = false; s.dying = false; }
 }
 if(s.flash > 0) s.flash -= dt;
+if(s.knockTimer > 0){ s.x += s.knockVX*(dt/1000); s.knockTimer=Math.max(0,s.knockTimer-dt); if(s.knockTimer<=0)s.knockVX=0; }
 }
 }
 
@@ -856,14 +965,17 @@ if(controlled.atkTimer > 0) controlled.atkTimer = Math.max(0, controlled.atkTime
 if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
   controlled.atkCd = controlled.atkCdMax;
   controlled.atkTimer = 250;
-  // Hit French soldiers
+  // Hit French soldiers — 3 hits to kill (34 dmg per hit on 100 HP)
   for(const f of napoleon.soldiers){
     if(!f.alive || f.dying) continue;
     const ddx = (f.x - controlled.x) * controlled.facing;
     const ddy = Math.abs(f.y - controlled.y);
     if(ddx > -10 && ddx < controlled.atkRange && ddy < 30){
-      f.hp -= 20 + Math.floor(Math.random()*10);
-      f.flash = 150;
+      f.hp -= 34 + Math.floor(Math.random()*4);
+      f.flash = 200;
+      // Knockback: push enemy in the direction the player is facing
+      f.knockVX = controlled.facing * 80;
+      f.knockTimer = 180;
       if(f.hp <= 0 && !f.dying){
         f.dying = true; f.dyingMs = 800; f.deathType = 'combat';
       }
@@ -919,8 +1031,10 @@ if(nearF && nearD < 200){
     s.y += (ddy/dlen) * s.speed * 0.4 * (dt/1000);
   } else if(s.atkCd <= 0){
     s.atkCd = s.atkCdMax; s.atkTimer = 250;
-    nearF.hp -= 12 + Math.floor(Math.random()*6);
-    nearF.flash = 150;
+    nearF.hp -= 34 + Math.floor(Math.random()*4);
+    nearF.flash = 200;
+    nearF.knockVX = (s.facing) * 70;
+    nearF.knockTimer = 160;
     if(nearF.hp <= 0 && !nearF.dying){
       nearF.dying = true; nearF.dyingMs = 800; nearF.deathType = 'combat';
     }
@@ -957,10 +1071,13 @@ for(const r of russia.deployed){
 }
 
 if(nearR && nearD < 35){
-  // French attacks Russian
-  if(Math.random() < 0.002 * dt){
-    nearR.hp -= 8 + Math.floor(Math.random()*6);
-    nearR.flash = 150;
+  // French attacks Russian — 3 hits to kill
+  if(Math.random() < 0.0018 * dt){
+    nearR.hp -= 34 + Math.floor(Math.random()*4);
+    nearR.flash = 200;
+    // Knock Russian back away from French
+    nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
+    nearR.knockTimer = 180;
     if(nearR.hp <= 0 && !nearR.dying){
       nearR.dying = true; nearR.dyingMs = 800;
     }
@@ -1464,16 +1581,21 @@ ctx.globalAlpha = alpha;
 if(s.deathType==='freeze'){
 ctx.filter = `saturate(0.2) brightness(1.4) hue-rotate(195deg)`;
 } else if(s.deathType==='disease'){
-ctx.filter = `saturate(0.4) hue-rotate(75deg) brightness(0.8)`;
+ctx.filter = `saturate(0.3) hue-rotate(90deg) brightness(0.75)`;
 }
 ctx.rotate(Math.min(Math.PI/2, (1-alpha)*Math.PI/1.8) * s.facing);
+} else if(s.diseased && s.sickness > 0){
+// Living sick soldiers gradually go green
+const sk = s.sickness;
+ctx.filter = `saturate(${1+sk*1.5}) hue-rotate(${Math.round(sk*80)}deg) brightness(${1-sk*0.25})`;
 }
-if(s.flash > 0) ctx.filter = 'brightness(6)';
+if(s.flash > 0) ctx.filter = 'brightness(6) saturate(0.2)';
 
 const wk = Math.floor(s.walkTimer/190)%2;
 const f = s.facing;
 const isRaider = s.role === 'raider';
 const isVanguard = s.role === 'vanguard';
+const isWorker = s.role === 'worker';
 
 // Shadow
 ctx.fillStyle='rgba(0,0,0,0.18)';
@@ -1542,15 +1664,54 @@ ctx.fillStyle='#333';
 ctx.fillRect(-6,13+lL,5,2);
 ctx.fillRect(0,13+lR,5,2);
 
+if(isWorker){
+// Worker carries a wooden plank + hammer instead of musket
+ctx.fillStyle='#6a4a20';
+ctx.save();
+ctx.translate(f*6, -6);
+ctx.rotate(s.hammerAngle);
+// Hammer handle
+ctx.fillRect(-1,-14,2,18);
+// Hammer head
+ctx.fillStyle='#888888';
+ctx.fillRect(-4,-16,8,5);
+ctx.restore();
+// Plank under arm
+ctx.fillStyle='#8a6030';
+ctx.save(); ctx.translate(f*2, 3); ctx.rotate(f*0.3);
+ctx.fillRect(-12,-2,24,4);
+ctx.restore();
+} else {
 // Musket with long barrel
 ctx.fillStyle='#2a1a0a';
 ctx.fillRect(f*7,-14,2,22);
-// Musket lock (side metal parts)
+// Musket lock
 ctx.fillStyle='#888';
 ctx.fillRect(f*7-f*1,-10,f*2,4);
-// Bayonet (long spike)
+// Bayonet
 ctx.fillStyle='#aaaaaa';
 ctx.fillRect(f*7,-20,2,7);
+}
+
+// Raider food cart (drawn behind soldier when returning with food)
+if(isRaider && s.carrying && s.carryFood > 0){
+ctx.save();
+ctx.translate(-f*14, 4);
+// Small cart body
+ctx.fillStyle='#7a5a20';
+ctx.fillRect(-10,-4,20,8);
+// Wheels
+ctx.strokeStyle='#5a3a10'; ctx.lineWidth=2;
+ctx.beginPath(); ctx.arc(-6,5,5,0,Math.PI*2); ctx.stroke();
+ctx.beginPath(); ctx.arc(6,5,5,0,Math.PI*2); ctx.stroke();
+// Food load (sacks, size = carryFood/20)
+const loadH = Math.round((s.carryFood/20)*8)+2;
+ctx.fillStyle='#c8a030';
+ctx.fillRect(-8,-4-loadH,16,loadH);
+ctx.fillStyle='#aa8020';
+ctx.fillRect(-7,-4-loadH,14,3);
+ctx.restore();
+}
 
 ctx.filter='none';
 ctx.restore();
@@ -1629,6 +1790,90 @@ ctx.restore();
 
 ctx.filter='none';
 ctx.restore();
+}
+
+function drawSupplyWagons(){
+if(!napoleon.wagons) return;
+const foodRatio = Math.max(0, napoleon.food / napoleon.maxFood);
+for(let i=0; i<napoleon.wagons.length; i++){
+const wag = napoleon.wagons[i];
+const sx = Math.round(wag.x - camera.x);
+const sy = GROUND_Y + 44 + wag.offsetZ;
+if(sx < -80 || sx > W+80) continue;
+const wobbleX = Math.sin(wag.wobble) * 1.5;
+ctx.save();
+ctx.translate(sx + wobbleX, sy);
+
+// Shadow
+ctx.fillStyle='rgba(0,0,0,0.2)';
+ctx.beginPath(); ctx.ellipse(0,4,22,5,0,0,Math.PI*2); ctx.fill();
+
+// Wagon bed (brown wood)
+ctx.fillStyle='#6a4a20';
+ctx.fillRect(-20,-10,40,12);
+// Planks
+ctx.strokeStyle='#4a3010'; ctx.lineWidth=0.8;
+for(let p=-18;p<20;p+=7){ ctx.beginPath(); ctx.moveTo(p,-10); ctx.lineTo(p,2); ctx.stroke(); }
+// Side boards
+ctx.fillStyle='#7a5a28';
+ctx.fillRect(-20,-14,40,4);
+ctx.fillRect(-20,-1,40,4);
+
+// Food load on wagon — scale height by food ratio (divided among 3 wagons)
+const loadRatio = Math.max(0, foodRatio - i * 0.08); // back wagons empty first
+if(loadRatio > 0.05){
+  const lh = Math.round(loadRatio * 14) + 2;
+  // Sacks / barrels
+  ctx.fillStyle='#c8a030';
+  ctx.fillRect(-18,-14-lh,36,lh);
+  // Rope over top
+  ctx.strokeStyle='#5a3a10'; ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(-18,-14-lh+2);
+  ctx.quadraticCurveTo(0,-14-lh-3,18,-14-lh+2);
+  ctx.stroke();
+  // Highlight top sacks
+  ctx.fillStyle='#dab040';
+  ctx.fillRect(-16,-14-lh,32,3);
+  // Show barrels if >50% full
+  if(loadRatio > 0.5){
+    ctx.fillStyle='#8a4820';
+    ctx.beginPath(); ctx.ellipse(-10,-14-lh+4,6,8,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#6a3810';
+    ctx.fillRect(-14,-14-lh+2,2,6); ctx.fillRect(-4,-14-lh+2,2,6);
+  }
+}
+
+// Front/back boards
+ctx.fillStyle='#5a3818';
+ctx.fillRect(-22,-12,4,14);
+ctx.fillRect(18,-12,4,14);
+
+// Wheels (2 per side visible)
+const wx = [-14, 12];
+for(const wox of wx){
+  ctx.strokeStyle='#3a2408'; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.arc(wox, 4, 8, 0, Math.PI*2); ctx.stroke();
+  // Spokes
+  ctx.lineWidth=1.5;
+  for(let sp=0;sp<6;sp++){
+    const a = sp*Math.PI/3 + wag.wobble*0.5;
+    ctx.beginPath();
+    ctx.moveTo(wox,4);
+    ctx.lineTo(wox+Math.cos(a)*7, 4+Math.sin(a)*7);
+    ctx.stroke();
+  }
+  // Hub
+  ctx.fillStyle='#8a6030';
+  ctx.beginPath(); ctx.arc(wox,4,2.5,0,Math.PI*2); ctx.fill();
+}
+
+// Axle
+ctx.fillStyle='#4a3010';
+ctx.fillRect(-16,1,32,3);
+
+ctx.restore();
+}
 }
 
 function drawNapoleon(){
@@ -2098,7 +2343,7 @@ drawTitle(); return;
 }
 if(phase==='gameover_win'||phase==='gameover_lose'||phase==='napoleon_wins'||phase==='burned'){
 // Draw the world behind the overlay
-drawSky(); drawParallax(); drawGround(); drawRivers(); drawBridges(); drawFarms(); drawMoscow();
+drawSky(); drawParallax(); drawGround(); drawRivers(); drawBridges(); drawFarms(); drawMoscow(); drawSupplyWagons();
 // Sort and draw all soldiers
 const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying), ...russia.deployed.filter(s=>s.alive||s.dying)];
 all.sort((a,b)=>a.y-b.y);
@@ -2119,6 +2364,7 @@ drawRivers();
 drawBridges();
 drawFarms();
 drawMoscow();
+drawSupplyWagons();
 
 // Z-sort all soldiers
 const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying), ...russia.deployed.filter(s=>s.alive||s.dying)];
