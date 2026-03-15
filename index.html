@@ -713,51 +713,24 @@ addMessage(`Napoleon escapes with ${aliveF} soldiers of 100,000.`, 5000);
 }
 
 function updateNapoleonAdvance(dt){
-if(napoleon.stopped || napoleon.atMoscow) return;
-
-// Check for river/bridge — assign workers when first stopped
-for(const bridge of bridges){
-if(Math.abs(napoleon.x - bridge.x) < 50){
-if(!bridge.intact && !napoleon.buildingBridge){
-napoleon.stopped = true;
-napoleon.buildingBridge = true;
-napoleon.bridgeBuildTime = 0;
-napoleon.bridgeBuildMax = 5000;
-napoleon.buildBridgeX = bridge.x;
-// Assign 4 nearby column soldiers as workers
-napoleon.workerIds = [];
-for(const s of napoleon.soldiers){
-  if(s.alive && !s.dying && s.role === 'column' && napoleon.workerIds.length < 4){
-    s.role = 'worker';
-    napoleon.workerIds.push(s.id);
-  }
-}
-addMessage('Napoleon must build a bridge! This is your chance!', 3000);
-return;
-}
-}
-}
-
-// Bridge building
+// Bridge building runs regardless of stopped state
 if(napoleon.buildingBridge){
 napoleon.bridgeBuildTime += dt;
-
 // Workers animate hammering and move toward bridge
 for(const s of napoleon.soldiers){
   if(!s.alive || s.dying || s.role !== 'worker') continue;
-  const targetX = napoleon.buildBridgeX + (napoleon.workerIds.indexOf(s.id) - 1.5) * 14;
+  const workerSlot = napoleon.workerIds.indexOf(s.id);
+  const targetX = napoleon.buildBridgeX + (workerSlot - 1.5) * 14;
   const dx = targetX - s.x;
   if(Math.abs(dx) > 6){
     s.x += Math.sign(dx) * 40 * (dt/1000);
     s.facing = dx > 0 ? 1 : -1;
     s.walkTimer += dt;
   }
-  // Hammer animation: oscillates when at bridge
   if(Math.abs(dx) < 30){
-    s.hammerAngle = Math.sin(gameTime * 0.008 + napoleon.workerIds.indexOf(s.id)) * 1.4;
+    s.hammerAngle = Math.sin(gameTime * 0.008 + workerSlot) * 1.4;
   }
 }
-
 if(napoleon.bridgeBuildTime >= napoleon.bridgeBuildMax){
   napoleon.buildingBridge = false;
   napoleon.stopped = false;
@@ -766,13 +739,37 @@ if(napoleon.bridgeBuildTime >= napoleon.bridgeBuildMax){
       b.intact = true; b.hp = 100; break;
     }
   }
-  // Return workers to column
   for(const s of napoleon.soldiers){
     if(s.role === 'worker'){ s.role = 'column'; s.hammerAngle = 0; }
   }
   napoleon.workerIds = [];
+  addMessage('Bridge rebuilt! The Grande Armée advances.', 2500);
 }
-return;
+return; // don't march while workers are building
+}
+
+if(napoleon.stopped || napoleon.atMoscow) return;
+
+// Check for river/bridge — assign workers when first hit
+for(const bridge of bridges){
+if(Math.abs(napoleon.x - bridge.x) < 50){
+if(!bridge.intact){
+  napoleon.stopped = true;
+  napoleon.buildingBridge = true;
+  napoleon.bridgeBuildTime = 0;
+  napoleon.bridgeBuildMax = 5000;
+  napoleon.buildBridgeX = bridge.x;
+  napoleon.workerIds = [];
+  for(const s of napoleon.soldiers){
+    if(s.alive && !s.dying && s.role === 'column' && napoleon.workerIds.length < 4){
+      s.role = 'worker';
+      napoleon.workerIds.push(s.id);
+    }
+  }
+  addMessage('Napoleon must build a bridge! Attack the workers!', 3500);
+  return;
+}
+}
 }
 
 // March forward
@@ -1127,11 +1124,18 @@ const winterFactor = Math.max(0, Math.min(1, (5 - temperature) / 30));
 // -- FAR LAYER: distant hills / horizon --
 // Hill silhouettes that slowly change colour with season
 const hillBase = GROUND_Y - 20;
-const hillCol = lerpColor(
-  lerpColor('#6a8a5a', '#4a6a8a', Math.min(1, progress * 3)),  // green -> grey-blue forest
-  '#9a9aaa', // winter grey
-  winterFactor * 0.7
-);
+// Hill colour: green -> forest grey-blue -> burned dark ochre -> ember-lit dark for Moscow
+let hillBase1;
+if(progress < 0.72){
+  hillBase1 = lerpColor('#6a8a5a', '#4a6a8a', Math.min(1, progress * 3));
+} else if(progress < 0.92){
+  // Steppe: dark scorched earth, warm brown-black
+  hillBase1 = lerpColor('#4a6a8a', '#3a2210', (progress - 0.72) / 0.20);
+} else {
+  // Moscow outskirts: ember-lit dark brown with red hint
+  hillBase1 = lerpColor('#3a2210', '#3a1a08', (progress - 0.92) / 0.08);
+}
+const hillCol = lerpColor(hillBase1, '#9a9aaa', winterFactor * 0.4);
 
 ctx.fillStyle = hillCol;
 // Generate repeating hills using sine waves, offset by parallax
@@ -1277,66 +1281,160 @@ for(let i = 0; i < 32; i++){
 }
 
 function drawSteppe(camOffset, treeY, winterFactor, progress){
-// Flat open steppe - burned fields, lonely dead trees, smoke columns
-const burnProgress = (progress - 0.70) / 0.22;
+const t = gameTime;
+const burnP = Math.min(1, (progress - 0.70) / 0.22);
 
-// Scorched field texture
-const fieldCol = lerpColor(
-  lerpColor('#8a7a4a', '#5a3a1a', burnProgress),
-  '#9a9088',
-  winterFactor
-);
-ctx.fillStyle = fieldCol;
-ctx.fillRect(0, treeY - 18, W, 18);
+// Scorched ash ground strip
+ctx.fillStyle = lerpColor(lerpColor('#5a3a10','#2a1a08',burnP),'#7a7060',winterFactor*0.4);
+ctx.fillRect(0, treeY - 22, W, 22);
 
-// Dead/stripped trees
-for(let i = 0; i < 10; i++){
-  const seedX = (i * 2131 + 557) % 5000;
-  const sx = ((seedX - camOffset % 5000) + 5000) % 5000 - 40;
-  if(sx < -40 || sx > W + 40) continue;
-  const h = 22 + (i * 9) % 18;
-  ctx.fillStyle = '#3a2a18';
-  ctx.fillRect(sx - 2, treeY - h, 3, h);
-  // Bare branches
-  ctx.strokeStyle = '#3a2a18'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(sx, treeY-h); ctx.lineTo(sx-8, treeY-h+8); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(sx, treeY-h); ctx.lineTo(sx+7, treeY-h+6); ctx.stroke();
+// Ash patches
+ctx.fillStyle = `rgba(20,15,10,${0.5+burnP*0.3})`;
+for(let i=0;i<14;i++){
+  const px = ((i*1871+233) % 5000 - camOffset % 5000 + 5000) % 5000;
+  if(px < W+60) ctx.fillRect(px - 25 + Math.sin(i*1.7)*15, treeY - 20, 38 + i%18, 12);
 }
 
-// Distant smoke columns from burning villages
-for(let i = 0; i < 3; i++){
-  const seedX = (i * 3017 + 233) % 5000;
-  const sx = ((seedX - camOffset % 5000) + 5000) % 5000 - 20;
-  if(sx < 0 || sx > W) continue;
-  ctx.strokeStyle = `rgba(80,70,60,${0.3 + burnProgress*0.3})`;
-  ctx.lineWidth = 3 + i * 2;
+// Charred tree trunks — stark black silhouettes
+for(let i=0;i<10;i++){
+  const seedX = (i*2131+557) % 5000;
+  const sx = ((seedX - camOffset % 5000) + 5000) % 5000 - 40;
+  if(sx < -40 || sx > W+40) continue;
+  const h = 24 + (i*9)%20;
+  ctx.fillStyle = '#181008';
+  ctx.fillRect(sx-2, treeY-h, 4, h);
+  ctx.strokeStyle='#181008'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(sx,treeY-h); ctx.lineTo(sx-10+i%5*2,treeY-h+7); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sx,treeY-h*0.7); ctx.lineTo(sx+8+i%4*2,treeY-h*0.55); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sx,treeY-h*0.45); ctx.lineTo(sx-6+i%3,treeY-h*0.32); ctx.stroke();
+}
+
+// Dead cows — bloated bodies on their sides, legs up
+for(let i=0;i<5;i++){
+  const seedX = (i*3317+811) % 6500;
+  const sx = ((seedX - camOffset % 6500) + 6500) % 6500 - 50;
+  if(sx < -50 || sx > W+60) continue;
+  const cy = treeY - 5;
+  ctx.fillStyle = lerpColor('#7a4a20','#4a3014',winterFactor);
+  // Body (bloated ellipse)
+  ctx.beginPath(); ctx.ellipse(sx, cy-3, 16, 8, 0.15*(i%3-1), 0, Math.PI*2); ctx.fill();
+  // Legs sticking up
+  ctx.fillStyle = lerpColor('#5a3010','#3a2008',winterFactor);
+  ctx.fillRect(sx-11,cy-15,3,12); ctx.fillRect(sx-5,cy-14,3,12);
+  ctx.fillRect(sx+4,cy-13,3,12);  ctx.fillRect(sx+9,cy-11,3,12);
+  // Head
+  ctx.fillStyle = lerpColor('#7a4a20','#4a3014',winterFactor);
+  ctx.beginPath(); ctx.ellipse(sx+17,cy-4,5,4,0.3,0,Math.PI*2); ctx.fill();
+  // Horn
+  ctx.strokeStyle = '#3a2010'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(sx+20,cy-7); ctx.lineTo(sx+24,cy-12); ctx.stroke();
+}
+
+// Smoldering farmhouse ruins
+for(let i=0;i<4;i++){
+  const seedX = (i*2713+419) % 7500;
+  const sx = ((seedX - camOffset % 7500) + 7500) % 7500 - 70;
+  if(sx < -70 || sx > W+70) continue;
+  const rh = 20 + i*6;
+  // Charred walls
+  ctx.fillStyle='#130e06';
+  ctx.fillRect(sx-22,treeY-rh,44,rh);
+  // Jagged broken top — alternating heights
+  ctx.fillStyle='#1e1508';
+  for(let w=0;w<5;w++) ctx.fillRect(sx-20+w*9, treeY-rh-(w%2)*6-3, 7, rh+(w%2)*6+3);
+  // Window holes (dark)
+  ctx.fillStyle='#080502';
+  ctx.fillRect(sx-14,treeY-rh+4,10,8); ctx.fillRect(sx+4,treeY-rh+4,10,8);
+  // Orange ember glow at base
+  ctx.fillStyle=`rgba(255,100,10,${0.28+Math.sin(t*0.005+i*1.3)*0.12})`;
+  ctx.fillRect(sx-20,treeY-10,40,8);
+  ctx.fillStyle=`rgba(255,180,20,${0.18+Math.sin(t*0.008+i)*0.1})`;
+  ctx.fillRect(sx-14,treeY-14,28,5);
+  // Smoke column
+  ctx.strokeStyle=`rgba(50,40,30,${0.45+burnP*0.2})`; ctx.lineWidth=4+i*1.5;
   ctx.beginPath();
-  for(let y = treeY - 15; y > treeY - 80; y -= 5){
-    const wobble = Math.sin(gameTime * 0.001 + y * 0.1 + i) * 3;
-    if(y === treeY - 15) ctx.moveTo(sx + wobble, y);
-    else ctx.lineTo(sx + wobble, y);
+  for(let y=treeY-rh; y>treeY-rh-75; y-=5){
+    const wx = sx + Math.sin(t*0.0015+y*0.09+i*2.1)*6;
+    if(y===treeY-rh) ctx.moveTo(wx,y); else ctx.lineTo(wx,y);
   }
   ctx.stroke();
 }
 }
 
 function drawMoscowOutskirts(camOffset, treeY, winterFactor){
-// Monastery walls and church domes on the horizon
-ctx.fillStyle = lerpColor('#7a6a5a', '#888090', winterFactor);
+const t = gameTime;
 
-for(let i = 0; i < 3; i++){
-  const sx = 180 + i * 260 - (camOffset % 900);
-  if(sx < -100 || sx > W + 100) continue;
-  const baseH = 30 + i * 8;
-  // Wall
-  ctx.fillRect(sx - 40, treeY - baseH, 80, baseH);
-  // Battlements
-  for(let b = 0; b < 5; b++) ctx.fillRect(sx - 38 + b*18, treeY - baseH - 6, 10, 6);
+// Burning orange glow on horizon
+ctx.fillStyle = `rgba(180,50,0,0.14)`;
+ctx.fillRect(0, 0, W, treeY);
+ctx.fillStyle = `rgba(220,80,10,0.08)`;
+ctx.fillRect(0, treeY-80, W, 80);
+
+// Charred/collapsed monastery walls + burning church domes
+const wallCol = lerpColor('#1e1408','#28202a',winterFactor);
+for(let i=0;i<3;i++){
+  const sx = ((800+i*300 - camOffset % 1100) + 2200) % 2200 - 80;
+  if(sx < -100 || sx > W+100) continue;
+  const bh = 34 + i*9;
+
+  // Wall — crumbling, uneven top
+  ctx.fillStyle = wallCol;
+  ctx.fillRect(sx-44, treeY-bh, 88, bh);
+  // Crumbled battlements (some missing)
+  for(let b=0;b<6;b++){
+    if((b+i)%3===0) continue; // gap
+    ctx.fillRect(sx-42+b*15, treeY-bh-5-(b%2)*4, 11, 5+(b%2)*4);
+  }
+
   // Tower
-  ctx.fillRect(sx - 10, treeY - baseH - 20, 20, 20);
-  // Onion dome
-  ctx.beginPath(); ctx.arc(sx, treeY - baseH - 26, 11, Math.PI, 0); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(sx - 5, treeY - baseH - 34); ctx.quadraticCurveTo(sx, treeY - baseH - 44, sx + 5, treeY - baseH - 34); ctx.fill();
+  ctx.fillStyle = lerpColor('#1a1006','#222030',winterFactor);
+  ctx.fillRect(sx-11,treeY-bh-24,22,24);
+
+  // Onion dome — tilted/damaged
+  ctx.save(); ctx.translate(sx,treeY-bh-26); ctx.rotate((i-1)*0.12);
+  ctx.fillStyle=lerpColor('#2a1a08','#1a1830',winterFactor);
+  ctx.beginPath(); ctx.arc(0,0,12,Math.PI,0); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-6,-6); ctx.quadraticCurveTo(0,-18,6,-6); ctx.fill();
+  ctx.restore();
+
+  // Glowing fire inside/behind dome
+  ctx.fillStyle=`rgba(255,80,10,${0.22+Math.sin(t*0.004+i*1.7)*0.1})`;
+  ctx.beginPath(); ctx.arc(sx,treeY-bh-10,16,Math.PI,0); ctx.fill();
+
+  // Heavy smoke
+  ctx.strokeStyle=`rgba(40,30,20,0.55)`; ctx.lineWidth=7+i*2;
+  ctx.beginPath();
+  for(let y=treeY-bh-20; y>treeY-bh-110; y-=5){
+    const wx=sx+Math.sin(t*0.0012+y*0.07+i*2)*8;
+    if(y===treeY-bh-20) ctx.moveTo(wx,y); else ctx.lineTo(wx,y);
+  }
+  ctx.stroke();
+}
+
+// Scattered debris on ground: abandoned broken wagons
+for(let i=0;i<3;i++){
+  const sx = ((i*2300+650 - camOffset % 4500) + 4500) % 4500 - 50;
+  if(sx < -50 || sx > W+60) continue;
+  ctx.fillStyle='#2a1808';
+  ctx.save(); ctx.translate(sx,treeY-4); ctx.rotate((i-1)*0.25);
+  ctx.fillRect(-18,-5,36,7); // broken cart bed
+  ctx.restore();
+  ctx.strokeStyle='#2a1808'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(sx-10,treeY+3,7,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(sx+10,treeY+3,7,0,Math.PI*2); ctx.stroke();
+}
+
+// Dead trees silhouetted against the glow
+for(let i=0;i<7;i++){
+  const seedX=(i*1873+319)%3800;
+  const sx=((seedX-camOffset%3800)+3800)%3800-40;
+  if(sx<-40||sx>W+40) continue;
+  const h=28+(i*11)%24;
+  ctx.fillStyle='#100a04';
+  ctx.fillRect(sx-2,treeY-h,4,h);
+  ctx.strokeStyle='#100a04'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(sx,treeY-h); ctx.lineTo(sx-12+i%5*3,treeY-h+10); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sx,treeY-h*0.65); ctx.lineTo(sx+10+i%4*2,treeY-h*0.5); ctx.stroke();
 }
 }
 
