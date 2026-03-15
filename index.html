@@ -309,8 +309,8 @@ for(let i=0; i<26; i++){
   // Alternate above / below road, with some randomness
   const aboveRoad = (i % 2 === 0) || Math.random() < 0.3;
   const fy = aboveRoad
-    ? GROUND_Y - 72 + Math.floor(Math.random()*12)   // north field
-    : GROUND_Y + 72 + Math.floor(Math.random()*12);   // south field
+    ? GROUND_Y + 14 + Math.floor(Math.random()*8)    // north strip: just above the road (y 354-362)
+    : GROUND_Y + 140 + Math.floor(Math.random()*14); // south strip: lower field near bottom (y 480-494)
   farms.push({
     x: fx, y: fy,
     food: 28 + Math.floor(Math.random()*22),
@@ -329,8 +329,8 @@ for(let i=0; i<14; i++){
   if(rivers.some(r => Math.abs(r.x - fx)<120)) continue;
   const aboveRoad = i % 2 === 0;
   const fy = aboveRoad
-    ? GROUND_Y - 68 + Math.floor(Math.random()*10)
-    : GROUND_Y + 68 + Math.floor(Math.random()*10);
+    ? GROUND_Y + 14 + Math.floor(Math.random()*8)    // north strip above road
+    : GROUND_Y + 140 + Math.floor(Math.random()*12); // south strip near bottom
   farms.push({
     x: fx, y: fy,
     food: 18 + Math.floor(Math.random()*14),
@@ -1871,7 +1871,7 @@ if(bridge.hp < bridge.maxHp){
 function drawFarms(){
 for(const farm of farms){
 const sx = farm.x - camera.x;
-const fy = farm.y || GROUND_Y - 70; // y anchor (base of building)
+const fy = farm.y || GROUND_Y + 16; // y anchor (base of building)
 if(sx < -90 || sx > W+90) continue;
 
 // Charred remains
