@@ -98,7 +98,7 @@ canvas.width=W; canvas.height=H;
 const MAP_WIDTH = 12000;
 const MOSCOW_X = MAP_WIDTH - 400;
 const GROUND_Y = 340;
-const LANE_TOP = 300, LANE_BOT = 440;
+const LANE_TOP = 258, LANE_BOT = 495;
 const DEPLOY_ZONE_X = 150;
 
 // -- COLORS --
@@ -300,35 +300,48 @@ rivers.push({ x:rx, width:80 });
 bridges.push({ x:rx, intact:true, hp:100, maxHp:100, width:80 });
 }
 
-// Farms scattered along the route
-for(let i=0; i<22; i++){
-const fx = 600 + i * 480 + (Math.random()-0.5)*160;
-if(!rivers.some(r => Math.abs(r.x - fx)<120)){
-farms.push({
-x: fx,
-food: 30 + Math.floor(Math.random()*20),
-maxFood: 50,
-alive: true,
-burning: false,
-burnTimer: 0,
-isHouse: false,
-});
+// Farm types: farmhouse, barn, windmill, cottage
+const FARM_TYPES = ['farmhouse','barn','windmill','cottage'];
+// Farms on both sides of the road
+for(let i=0; i<26; i++){
+  const fx = 500 + i * 420 + (Math.random()-0.5)*140;
+  if(rivers.some(r => Math.abs(r.x - fx)<120)) continue;
+  // Alternate above / below road, with some randomness
+  const aboveRoad = (i % 2 === 0) || Math.random() < 0.3;
+  const fy = aboveRoad
+    ? GROUND_Y - 72 + Math.floor(Math.random()*12)   // north field
+    : GROUND_Y + 72 + Math.floor(Math.random()*12);   // south field
+  farms.push({
+    x: fx, y: fy,
+    food: 28 + Math.floor(Math.random()*22),
+    maxFood: 50,
+    alive: true,
+    burning: false,
+    burnTimer: 0,
+    farmHp: 3,
+    isHouse: false,
+    type: FARM_TYPES[i % 4],
+  });
 }
-}
-// Extra village houses densely clustered near Moscow (x 8000-11200)
-for(let i=0; i<12; i++){
-const fx = 8100 + i * 280 + (Math.random()-0.5)*120;
-if(!rivers.some(r => Math.abs(r.x - fx)<120)){
-farms.push({
-x: fx,
-food: 20 + Math.floor(Math.random()*15),
-maxFood: 35,
-alive: true,
-burning: false,
-burnTimer: 0,
-isHouse: true,
-});
-}
+// Village houses densely clustered near Moscow (x 8000-11200), both sides
+for(let i=0; i<14; i++){
+  const fx = 8000 + i * 240 + (Math.random()-0.5)*100;
+  if(rivers.some(r => Math.abs(r.x - fx)<120)) continue;
+  const aboveRoad = i % 2 === 0;
+  const fy = aboveRoad
+    ? GROUND_Y - 68 + Math.floor(Math.random()*10)
+    : GROUND_Y + 68 + Math.floor(Math.random()*10);
+  farms.push({
+    x: fx, y: fy,
+    food: 18 + Math.floor(Math.random()*14),
+    maxFood: 32,
+    alive: true,
+    burning: false,
+    burnTimer: 0,
+    farmHp: 3,
+    isHouse: true,
+    type: 'farmhouse',
+  });
 }
 }
 
@@ -811,7 +824,7 @@ wag.wobble += dt * 0.003;
 for(const s of napoleon.soldiers){
 if(!s.alive || s.dying) continue;
 s.walkTimer += dt;
-napoleon.food -= dt * 0.000006;
+napoleon.food -= dt * 0.000025; // ~4× faster: each of 100 soldiers consumes more
 
 // Knockback decay
 if(s.knockTimer > 0){
@@ -829,26 +842,38 @@ if(s.diseased && !s.dying){
 }
 
 if(s.role === 'vanguard'){
-  // Vanguard runs well ahead of Napoleon
-  const targetX = napoleon.x + 60 + s.offsetY * 0.3 + Math.random()*60;
-  s.x += (targetX - s.x) * 0.012 + napoleon.speed * (dt/1000) * 0.95;
+  // Vanguard runs well ahead — but STOPS at broken bridges
+  let blockX = Infinity;
+  for(const b of bridges){
+    if(!b.intact && b.x > napoleon.x && b.x < blockX) blockX = b.x;
+  }
+  const rawTargetX = napoleon.x + 60 + s.offsetY * 0.3;
+  const targetX = Math.min(rawTargetX, blockX - 32);
+  if(s.x < blockX - 32){
+    s.x += (targetX - s.x) * 0.012 + napoleon.speed * (dt/1000) * 0.95;
+  } else {
+    s.x = blockX - 32; // hold at bridge edge
+  }
   s.facing = 1;
 } else if(s.role === 'raider'){
-  // Raiders race ahead to loot farms, then carry food back
+  // Raiders race ahead to loot farms, then carry food back slowly (laden)
   let nearFarm = null, nearFarmDist = Infinity;
   for(const farm of farms){
-    if(!farm.alive || farm.food <= 0 || farm.burning) continue;
-    const d = Math.abs(s.x - farm.x);
-    // Look further ahead than the main column
-    if(d < 600 && farm.x > napoleon.x - 100 && d < nearFarmDist){
+    if(!farm.alive || farm.food <= 0 || farm.burning || farm.farmHp <= 0) continue;
+    const d = Math.hypot(s.x - farm.x, s.y - farm.y);
+    if(d < 700 && farm.x > napoleon.x - 100 && d < nearFarmDist){
       nearFarm = farm; nearFarmDist = d;
     }
   }
   if(nearFarm && !s.raidReturning){
     s.raidTarget = nearFarm;
     const dx = nearFarm.x - s.x;
-    if(Math.abs(dx) > 20){
-      s.x += Math.sign(dx) * s.speed * 1.5 * (dt/1000); // faster
+    const dy = nearFarm.y - s.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    if(dist > 22){
+      s.x += (dx/dist) * s.speed * 1.55 * (dt/1000); // fast outbound
+      s.y += (dy/dist) * s.speed * 1.55 * (dt/1000);
+      s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
       s.facing = dx > 0 ? 1 : -1;
     } else {
       // At farm — forage, load cart
@@ -863,12 +888,14 @@ if(s.role === 'vanguard'){
       }
     }
   } else {
-    // Return to army with food
-    const targetX = napoleon.x - 60 - Math.random()*100;
-    s.x += (targetX - s.x) * 0.015 + napoleon.speed * (dt/1000) * 0.9;
-    s.facing = s.x > napoleon.x ? -1 : 1; // face back toward army
-    // Deposit food when close to column
-    if(Math.abs(s.x - napoleon.x) < 200 && s.carrying){
+    // Return to army with food — laden, so noticeably slower
+    const targetX = napoleon.x - 60;
+    const targetY = GROUND_Y + 35; // drift back to road level
+    s.x += (targetX - s.x) * 0.008 + napoleon.speed * (dt/1000) * 0.62;
+    s.y += (targetY - s.y) * 0.025;
+    s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
+    s.facing = s.x > napoleon.x ? -1 : 1;
+    if(Math.abs(s.x - napoleon.x) < 180 && s.carrying){
       napoleon.food = Math.min(napoleon.maxFood, napoleon.food + s.carryFood);
       s.carryFood = 0;
       s.carrying = false;
@@ -881,9 +908,9 @@ if(s.role === 'vanguard'){
   const targetX = napoleon.x - 50 - colPos * 500 + s.offsetY * 0.2;
   s.x += (targetX - s.x) * 0.006 + napoleon.speed * (dt/1000) * 0.88;
   s.facing = 1;
-  // Forage when passing farms
+  // Forage only from road-level farms (can't reach upper/lower fields)
   for(const farm of farms){
-    if(farm.alive && Math.abs(s.x - farm.x) < 50 && farm.food > 0){
+    if(farm.alive && Math.abs(s.x - farm.x) < 50 && Math.abs(s.y - farm.y) < 70 && farm.food > 0){
       const take = Math.min(dt * 0.004, farm.food);
       farm.food -= take;
       napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
@@ -1015,13 +1042,21 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
       break;
     }
   }
-  // Burn farms
+  // Attack farms / houses — 3 hits to destroy
   for(const farm of farms){
-    if(farm.alive && !farm.burning && Math.abs(controlled.x - farm.x)<50){
-      farm.burning = true;
-      farm.burnTimer = 2000;
-      russia.sharedFarmTarget = farm;
-      addMessage(farm.isHouse ? 'House burning!' : 'Farm burning! Scorched earth!', 2000);
+    if(!farm.alive || farm.burning) continue;
+    if(Math.abs(controlled.x - farm.x) < 55 && Math.abs(controlled.y - farm.y) < 58){
+      farm.farmHp = Math.max(0, farm.farmHp - 1);
+      if(farm.farmHp <= 0){
+        farm.burning = true;
+        farm.burnTimer = 2500;
+        russia.sharedFarmTarget = farm;
+        addMessage(farm.isHouse ? 'House burning!' : 'Farm burning! Scorched earth!', 2000);
+      } else {
+        const label = farm.type === 'windmill' ? 'Windmill' : farm.isHouse ? 'House' : farm.type === 'barn' ? 'Barn' : farm.type === 'cottage' ? 'Cottage' : 'Farm';
+        addMessage(`${label} hit! ${farm.farmHp} hit${farm.farmHp>1?'s':''} to burn.`, 900);
+      }
+      break; // one farm per swing
     }
   }
   // Attack Moscow directly
@@ -1200,6 +1235,74 @@ ctx.lineTo(0, GROUND_Y);
 ctx.closePath();
 ctx.fill();
 
+// -- FAR LAYER landmarks: spires, windmills, fortress silhouettes --
+const silCol = lerpColor(
+  progress < 0.72 ? lerpColor('#455845','#3a5060',Math.min(1,progress*3)) : '#1e1008',
+  '#6a6a7a', winterFactor * 0.5
+);
+
+if(progress < 0.72){
+  // Distant village church spires — one per ~2000 world units
+  for(let i=0; i<5; i++){
+    const seedX = (i*3700+1300) % 10000;
+    const lsx = ((seedX - camFar % 10000) + 10000) % 10000;
+    if(lsx > W+40) continue;
+    const spireBase = hillBase - 18 - Math.abs(Math.sin(seedX*0.002))*20;
+    ctx.fillStyle = silCol;
+    ctx.fillRect(lsx-4, spireBase, 8, hillBase-spireBase);
+    ctx.beginPath(); ctx.moveTo(lsx-9,spireBase+2); ctx.lineTo(lsx,spireBase-18); ctx.lineTo(lsx+9,spireBase+2); ctx.fill();
+    // Tiny onion dome silhouette
+    ctx.beginPath(); ctx.arc(lsx, spireBase-14, 6, Math.PI, 0); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(lsx-3,spireBase-18); ctx.quadraticCurveTo(lsx,spireBase-26,lsx+3,spireBase-18); ctx.fill();
+    ctx.fillRect(lsx-1, spireBase-28, 2, 6); // cross
+  }
+  // Distant windmill every ~3500 units
+  for(let i=0; i<3; i++){
+    const seedX = (i*4200+800) % 10000;
+    const lsx = ((seedX - camFar % 10000) + 10000) % 10000;
+    if(lsx > W+30) continue;
+    const wmBase = hillBase - 12 - Math.abs(Math.sin(seedX*0.003))*15;
+    ctx.fillStyle = silCol;
+    ctx.beginPath(); ctx.ellipse(lsx, wmBase-10, 6, 14, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(lsx-8,wmBase+2); ctx.lineTo(lsx,wmBase-24); ctx.lineTo(lsx+8,wmBase+2); ctx.fill();
+    // Sail cross
+    ctx.strokeStyle = silCol; ctx.lineWidth=1.5;
+    const sa = gameTime*0.0007 + i;
+    for(let ar=0;ar<4;ar++){
+      const aa=sa+ar*Math.PI/2;
+      ctx.beginPath(); ctx.moveTo(lsx,wmBase-10); ctx.lineTo(lsx+Math.cos(aa)*13,wmBase-10+Math.sin(aa)*13); ctx.stroke();
+    }
+  }
+} else if(progress < 0.90){
+  // Distant fortress/hilltop ruins silhouette
+  for(let i=0; i<3; i++){
+    const seedX = (i*5300+2100) % 10000;
+    const lsx = ((seedX - camFar % 10000) + 10000) % 10000;
+    if(lsx > W+60) continue;
+    const fBase = hillBase - 25 - Math.abs(Math.sin(seedX*0.0015))*25;
+    ctx.fillStyle = lerpColor('#241408','#1e1008',winterFactor);
+    ctx.fillRect(lsx-30, fBase, 60, hillBase-fBase);
+    // Broken battlements
+    for(let b=0;b<5;b++) ctx.fillRect(lsx-28+b*13, fBase-(b%2)*8-4, 9, (b%2)*8+4);
+    // Tower stump
+    ctx.fillRect(lsx-8, fBase-18, 16, 18);
+  }
+  // Distant rising smoke columns from the steppe
+  for(let i=0;i<4;i++){
+    const seedX = (i*2900+700)%10000;
+    const lsx = ((seedX - camFar % 10000)+10000)%10000;
+    if(lsx>W+20) continue;
+    ctx.strokeStyle=`rgba(30,20,10,${0.25+Math.sin(gameTime*0.0008+i)*0.08})`;
+    ctx.lineWidth=3+i%2;
+    ctx.beginPath();
+    for(let y=hillBase;y>hillBase-70;y-=5){
+      const wx2=lsx+Math.sin(gameTime*0.001+y*0.06+i*1.8)*5;
+      if(y===hillBase) ctx.moveTo(wx2,y); else ctx.lineTo(wx2,y);
+    }
+    ctx.stroke();
+  }
+}
+
 // -- MID LAYER: trees / landscape features --
 // Type transitions based on progress:
 // 0-0.15 open farmland (Lithuania border), 0.15-0.45 birch forest,
@@ -1251,15 +1354,33 @@ for(let i = 0; i < 18; i++){
   ctx.beginPath(); ctx.arc(sx, treeY - h - 6, 14 + (i%3)*4, 0, Math.PI*2); ctx.fill();
   ctx.globalAlpha = 1;
 }
-// Distant village church silhouette
-const churchX = ((800 - camOffset % 2000) + 2000) % 2000;
-if(churchX < W + 60){
-  ctx.fillStyle = lerpColor('#556055', '#666070', winterFactor);
-  ctx.fillRect(churchX - 8, treeY - 45, 16, 45);
-  ctx.beginPath(); ctx.moveTo(churchX-12, treeY-45); ctx.lineTo(churchX, treeY-62); ctx.lineTo(churchX+12, treeY-45); ctx.fill();
-  // Onion dome silhouette
-  ctx.beginPath(); ctx.arc(churchX, treeY-68, 8, Math.PI, 0); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(churchX-4, treeY-74); ctx.quadraticCurveTo(churchX, treeY-82, churchX+4, treeY-74); ctx.fill();
+// Haystacks in the fields
+for(let i=0; i<6; i++){
+  const seedX = (i*1523+773) % 2800;
+  const hsx = ((seedX - camOffset % 2800) + 2800) % 2800 - 15;
+  if(hsx < -15 || hsx > W+15) continue;
+  ctx.fillStyle = lerpColor('#c8a840','#c0c080',winterFactor);
+  ctx.beginPath(); ctx.ellipse(hsx, treeY-5, 11, 7, 0, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = lerpColor('#a88020','#a0a060',winterFactor);
+  ctx.beginPath(); ctx.ellipse(hsx, treeY-4, 9, 5, 0, Math.PI, 0); ctx.fill();
+}
+// Distant village cluster
+const vsx = ((1400 - camOffset % 3500) + 3500) % 3500;
+if(vsx < W + 80){
+  const vcol = lerpColor('#607258','#686878',winterFactor);
+  // Several small houses
+  for(let h=0; h<4; h++){
+    ctx.fillStyle = vcol;
+    ctx.fillRect(vsx-40+h*22, treeY-16, 16, 16);
+    ctx.beginPath(); ctx.moveTo(vsx-42+h*22, treeY-16); ctx.lineTo(vsx-32+h*22, treeY-26); ctx.lineTo(vsx-22+h*22, treeY-16); ctx.fill();
+  }
+  // Church with proper onion dome
+  ctx.fillStyle = lerpColor('#556855', '#666070', winterFactor);
+  ctx.fillRect(vsx+52, treeY-46, 14, 46);
+  ctx.beginPath(); ctx.moveTo(vsx+49, treeY-46); ctx.lineTo(vsx+59, treeY-58); ctx.lineTo(vsx+69, treeY-46); ctx.fill();
+  ctx.beginPath(); ctx.arc(vsx+59, treeY-64, 8, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(vsx+55, treeY-70); ctx.quadraticCurveTo(vsx+59, treeY-78, vsx+63, treeY-70); ctx.fill();
+  ctx.fillRect(vsx+58, treeY-80, 2, 7);
 }
 }
 
@@ -1622,14 +1743,14 @@ if(sx < -100 || sx > W+100) continue;
 
 const winterFactor = Math.max(0, Math.min(1, (-temperature)/15));
 
-// River water
+// River water — spans entire play area height
 ctx.fillStyle = lerpColor(COL.water, '#8a8a9a', winterFactor);
-ctx.fillRect(sx - river.width/2, GROUND_Y-5, river.width, H-GROUND_Y+5);
+ctx.fillRect(sx - river.width/2, LANE_TOP, river.width, H-LANE_TOP+5);
 
 // Ice sheen
 if(winterFactor > 0.3){
   ctx.fillStyle = `rgba(180,200,220,${winterFactor*0.4})`;
-  ctx.fillRect(sx - river.width/2, GROUND_Y-5, river.width, H-GROUND_Y+5);
+  ctx.fillRect(sx - river.width/2, LANE_TOP, river.width, H-LANE_TOP+5);
 }
 
 // Ripples
@@ -1653,39 +1774,95 @@ function drawBridges(){
 for(const bridge of bridges){
 const sx = bridge.x - camera.x;
 if(sx < -100 || sx > W+100) continue;
+const bw = bridge.width + 14; // total span
+const bLeft = sx - bw/2;
+const bRight = sx + bw/2;
+// Road deck sits at GROUND_Y+22; truss extends up to GROUND_Y-18
+const deckY = GROUND_Y + 22;
+const trussTopY = GROUND_Y - 18;
+const deckH = 16;
+
 if(!bridge.intact){
-// Broken bridge remnants
-ctx.fillStyle = '#4a3020';
-ctx.fillRect(sx-bridge.width/2-5, GROUND_Y+25, 15, 8);
-ctx.fillRect(sx+bridge.width/2-10, GROUND_Y+25, 15, 8);
-// Broken planks in water
-ctx.fillStyle = '#5a4030';
-ctx.save(); ctx.translate(sx-10, GROUND_Y+40); ctx.rotate(0.3);
-ctx.fillRect(-12,-3,24,6); ctx.restore();
-continue;
+  // Broken stump remnants on each bank
+  ctx.fillStyle = '#4a3020';
+  ctx.fillRect(bLeft-2, deckY, 14, deckH);
+  ctx.fillRect(bRight-12, deckY, 14, deckH);
+  // Truss post stubs
+  ctx.strokeStyle = '#3a2010'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(bLeft+5, deckY); ctx.lineTo(bLeft+5, deckY-22); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bRight-5, deckY); ctx.lineTo(bRight-5, deckY-22); ctx.stroke();
+  // Planks floating in river
+  ctx.fillStyle = '#5a4030';
+  ctx.save(); ctx.translate(sx-8, deckY+18); ctx.rotate(0.28);
+  ctx.fillRect(-14,-2.5,28,5); ctx.restore();
+  ctx.save(); ctx.translate(sx+12, deckY+28); ctx.rotate(-0.2);
+  ctx.fillRect(-10,-2,20,4); ctx.restore();
+  continue;
 }
-// Intact bridge
-ctx.fillStyle = COL.wood;
-ctx.fillRect(sx-bridge.width/2-5, GROUND_Y+22, bridge.width+10, 18);
-// Planks
-ctx.strokeStyle = '#3a2818'; ctx.lineWidth=1;
-for(let p=0; p<bridge.width; p+=8){
-ctx.beginPath();
-ctx.moveTo(sx-bridge.width/2+p, GROUND_Y+22);
-ctx.lineTo(sx-bridge.width/2+p, GROUND_Y+40);
-ctx.stroke();
+
+// === INTACT WARREN TRUSS BRIDGE ===
+// Road deck
+ctx.fillStyle = '#7a5a30';
+ctx.fillRect(bLeft, deckY, bw, deckH);
+// Deck planks (transverse lines)
+ctx.strokeStyle = '#4a3010'; ctx.lineWidth=0.9;
+for(let p=0; p<bw; p+=9){
+  ctx.beginPath();
+  ctx.moveTo(bLeft+p, deckY);
+  ctx.lineTo(bLeft+p, deckY+deckH);
+  ctx.stroke();
 }
-// Rails
-ctx.fillStyle = '#4a3828';
-ctx.fillRect(sx-bridge.width/2-5, GROUND_Y+18, bridge.width+10, 5);
+// Road surface highlight
+ctx.fillStyle = 'rgba(140,100,50,0.35)';
+ctx.fillRect(bLeft+2, deckY, bw-4, 4);
+
+// Truss side rails (top and bottom chord)
+const segments = Math.floor(bw / 14);
+ctx.strokeStyle = '#3a2808'; ctx.lineWidth=3;
+// Bottom chord (deck top edge)
+ctx.beginPath(); ctx.moveTo(bLeft, deckY); ctx.lineTo(bRight, deckY); ctx.stroke();
+// Top chord
+ctx.beginPath(); ctx.moveTo(bLeft, trussTopY); ctx.lineTo(bRight, trussTopY); ctx.stroke();
+
+// End posts (tall vertical at each end)
+ctx.lineWidth = 4;
+ctx.beginPath(); ctx.moveTo(bLeft, trussTopY); ctx.lineTo(bLeft, deckY+deckH); ctx.stroke();
+ctx.beginPath(); ctx.moveTo(bRight, trussTopY); ctx.lineTo(bRight, deckY+deckH); ctx.stroke();
+
+// Warren truss: alternating diagonals + verticals
+ctx.lineWidth = 2;
+for(let i=0; i<segments; i++){
+  const x1 = bLeft + i * bw/segments;
+  const x2 = bLeft + (i+1) * bw/segments;
+  // Vertical at x1
+  ctx.beginPath(); ctx.moveTo(x1, trussTopY); ctx.lineTo(x1, deckY); ctx.stroke();
+  // Diagonal: alternate direction (Warren pattern)
+  ctx.lineWidth = 1.5;
+  if(i % 2 === 0){
+    ctx.beginPath(); ctx.moveTo(x1, trussTopY); ctx.lineTo(x2, deckY); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(x1, deckY); ctx.lineTo(x2, trussTopY); ctx.stroke();
+  }
+  ctx.lineWidth = 2;
+}
+// Last vertical
+ctx.beginPath(); ctx.moveTo(bRight, trussTopY); ctx.lineTo(bRight, deckY); ctx.stroke();
+
+// Rivet dots at joints
+ctx.fillStyle = '#2a1808';
+for(let i=0; i<=segments; i++){
+  const px = bLeft + i * bw/segments;
+  ctx.beginPath(); ctx.arc(px, deckY, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(px, trussTopY, 2.5, 0, Math.PI*2); ctx.fill();
+}
 
 // HP bar if damaged
 if(bridge.hp < bridge.maxHp){
   const pct = bridge.hp/bridge.maxHp;
-  ctx.fillStyle='rgba(0,0,0,0.5)';
-  ctx.fillRect(sx-25, GROUND_Y+8, 50, 6);
+  ctx.fillStyle='rgba(0,0,0,0.55)';
+  ctx.fillRect(sx-28, trussTopY-12, 56, 7);
   ctx.fillStyle = pct>0.5?'#4a8a2a':'#c84020';
-  ctx.fillRect(sx-25, GROUND_Y+8, 50*pct, 6);
+  ctx.fillRect(sx-28, trussTopY-12, 56*pct, 7);
 }
 
 }
@@ -1694,73 +1871,172 @@ if(bridge.hp < bridge.maxHp){
 function drawFarms(){
 for(const farm of farms){
 const sx = farm.x - camera.x;
-if(sx < -80 || sx > W+80) continue;
-if(!farm.alive && !farm.burning){
+const fy = farm.y || GROUND_Y - 70; // y anchor (base of building)
+if(sx < -90 || sx > W+90) continue;
+
 // Charred remains
-ctx.fillStyle='#2a2020';
-ctx.fillRect(sx-12, GROUND_Y-5, 24, 10);
-continue;
+if(!farm.alive && !farm.burning){
+  ctx.fillStyle='#1a1414';
+  ctx.fillRect(sx-14, fy-4, 28, 8);
+  // Ash scatter
+  ctx.fillStyle='rgba(60,50,40,0.4)';
+  for(let a=0;a<5;a++) ctx.fillRect(sx-20+a*9, fy, 6, 3);
+  continue;
 }
 
+// Tilt from damage
+const dmgTilt = farm.farmHp < 3 ? (3 - farm.farmHp) * 0.06 : 0;
+ctx.save();
+ctx.translate(sx, fy);
+if(dmgTilt > 0) ctx.rotate(dmgTilt);
+
 if(farm.isHouse){
-  // Village house (near Moscow suburbs) — larger, with chimney and windows
-  ctx.fillStyle = '#b89a70';
-  ctx.fillRect(sx-18, GROUND_Y-34, 36, 34);
-  // Roof
-  ctx.fillStyle = '#5a2818';
-  ctx.beginPath();
-  ctx.moveTo(sx-22, GROUND_Y-34);
-  ctx.lineTo(sx, GROUND_Y-55);
-  ctx.lineTo(sx+22, GROUND_Y-34);
-  ctx.fill();
-  // Chimney
-  ctx.fillStyle = '#7a5040';
-  ctx.fillRect(sx+8, GROUND_Y-62, 6, 14);
-  // Windows
-  ctx.fillStyle = 'rgba(220,180,100,0.7)';
-  ctx.fillRect(sx-12, GROUND_Y-28, 8, 9);
-  ctx.fillRect(sx+4, GROUND_Y-28, 8, 9);
-  // Door
-  ctx.fillStyle = '#3a2010';
-  ctx.fillRect(sx-4, GROUND_Y-16, 8, 16);
+  // Moscow suburb house — larger with chimney and windows
+  ctx.fillStyle = farm.farmHp === 1 ? '#7a6040' : '#c8a870';
+  ctx.fillRect(-18,-34,36,34);
+  ctx.fillStyle = farm.farmHp === 1 ? '#4a1808' : '#7a3018';
+  ctx.beginPath(); ctx.moveTo(-22,-34); ctx.lineTo(0,-56); ctx.lineTo(22,-34); ctx.fill();
+  ctx.fillStyle='#6a4030'; ctx.fillRect(9,-64,6,16); // chimney
+  ctx.fillStyle='rgba(220,190,110,0.65)';
+  ctx.fillRect(-12,-28,9,10); ctx.fillRect(3,-28,9,10); // windows
+  ctx.fillStyle='#2a1808'; ctx.fillRect(-4,-16,8,16); // door
+  if(farm.farmHp === 2){ // crack overlay
+    ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(-6,-30); ctx.lineTo(-2,-18); ctx.lineTo(-8,-8); ctx.stroke();
+  }
 } else {
-  // Farmhouse
-  ctx.fillStyle = COL.farm;
-  ctx.fillRect(sx-15, GROUND_Y-25, 30, 25);
-  // Roof
-  ctx.fillStyle = '#8a4020';
-  ctx.beginPath();
-  ctx.moveTo(sx-20, GROUND_Y-25);
-  ctx.lineTo(sx, GROUND_Y-42);
-  ctx.lineTo(sx+20, GROUND_Y-25);
-  ctx.fill();
-  // Door
-  ctx.fillStyle='#3a2010';
-  ctx.fillRect(sx-4, GROUND_Y-14, 8, 14);
-  // Wheat fields
-  if(farm.food > 10){
-    ctx.fillStyle = COL.wheat;
-    for(let w=0; w<8; w++){
-      const wx = sx - 30 + w*8;
-      const wh = 8 + (farm.food/farm.maxFood)*10;
-      ctx.fillRect(wx, GROUND_Y-wh, 3, wh);
+  switch(farm.type){
+  case 'barn':
+    // Wide red barn
+    ctx.fillStyle = farm.farmHp === 1 ? '#5a1808' : '#9a2010';
+    ctx.fillRect(-22,-28,44,28);
+    // Gambrel roof (2-slope)
+    ctx.fillStyle = farm.farmHp === 1 ? '#3a1006' : '#5a1808';
+    ctx.beginPath(); ctx.moveTo(-24,-28); ctx.lineTo(-10,-40); ctx.lineTo(10,-40); ctx.lineTo(24,-28); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-10,-40); ctx.lineTo(0,-50); ctx.lineTo(10,-40); ctx.fill();
+    // Barn doors (X pattern)
+    ctx.strokeStyle='#2a0a04'; ctx.lineWidth=1.5;
+    ctx.strokeRect(-18,-26,16,26);
+    ctx.beginPath(); ctx.moveTo(-18,-26); ctx.lineTo(-2,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-2,-26); ctx.lineTo(-18,0); ctx.stroke();
+    ctx.strokeRect(2,-26,16,26);
+    ctx.beginPath(); ctx.moveTo(2,-26); ctx.lineTo(18,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(18,-26); ctx.lineTo(2,0); ctx.stroke();
+    if(farm.farmHp===2){ // damage crack
+      ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(4,-28); ctx.lineTo(0,-14); ctx.lineTo(6,-4); ctx.stroke();
     }
+    break;
+  case 'windmill':
+    // Round stone tower with rotating sails
+    ctx.fillStyle = farm.farmHp===1 ? '#5a5040' : '#9a9070';
+    ctx.beginPath(); ctx.ellipse(0,-20,12,22,0,0,Math.PI*2); ctx.fill();
+    // Conical cap
+    ctx.fillStyle = farm.farmHp===1 ? '#3a2010' : '#6a4020';
+    ctx.beginPath(); ctx.moveTo(-13,-38); ctx.lineTo(0,-58); ctx.lineTo(13,-38); ctx.fill();
+    // Sails (4 arms, rotating)
+    const sailAngle = gameTime * 0.0012 * (farm.food/farm.maxFood + 0.1);
+    ctx.strokeStyle = farm.farmHp===1 ? '#3a2808' : '#7a5a30';
+    ctx.lineWidth = 2.5;
+    for(let arm=0; arm<4; arm++){
+      const a = sailAngle + arm * Math.PI/2;
+      const tx = Math.cos(a)*22, ty = Math.sin(a)*22;
+      ctx.beginPath(); ctx.moveTo(0,-38); ctx.lineTo(tx, -38+ty); ctx.stroke();
+      // Sail blade
+      ctx.fillStyle='rgba(210,180,120,0.7)';
+      ctx.save();
+      ctx.translate(tx*0.5, -38+ty*0.5);
+      ctx.rotate(a);
+      ctx.fillRect(-3,-9,6,18);
+      ctx.restore();
+    }
+    // Window slits
+    ctx.fillStyle='rgba(40,30,10,0.7)';
+    ctx.fillRect(-2,-32,4,5); ctx.fillRect(-2,-20,4,5);
+    if(farm.farmHp===2){
+      ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(-8,-16); ctx.lineTo(-4,-4); ctx.stroke();
+    }
+    break;
+  case 'cottage':
+    // Small thatched cottage
+    ctx.fillStyle = farm.farmHp===1 ? '#6a5838' : '#c8b088';
+    ctx.fillRect(-14,-22,28,22);
+    // Thatched roof (thick, rounded)
+    ctx.fillStyle = farm.farmHp===1 ? '#4a3818' : '#8a7030';
+    ctx.beginPath(); ctx.moveTo(-17,-22); ctx.lineTo(0,-40); ctx.lineTo(17,-22); ctx.fill();
+    // Thatch texture lines
+    ctx.strokeStyle='rgba(0,0,0,0.18)'; ctx.lineWidth=1;
+    for(let t=0;t<5;t++){
+      ctx.beginPath(); ctx.moveTo(-16+t*7,-22); ctx.lineTo(-10+t*6,-39); ctx.stroke();
+    }
+    // Door + window
+    ctx.fillStyle='#3a2010'; ctx.fillRect(-4,-16,8,16);
+    ctx.fillStyle='rgba(200,160,80,0.6)'; ctx.fillRect(-12,-18,7,7);
+    // Flower box (when healthy)
+    if(farm.farmHp===3){
+      ctx.fillStyle='#5a2a10'; ctx.fillRect(-14,-4,8,4);
+      ctx.fillStyle='#cc3a5a';
+      ctx.beginPath(); ctx.arc(-12,-6,2,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(-8,-7,2,0,Math.PI*2); ctx.fill();
+    }
+    if(farm.farmHp===2){
+      ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(6,-18); ctx.lineTo(2,-8); ctx.stroke();
+    }
+    break;
+  default: // farmhouse
+    ctx.fillStyle = farm.farmHp===1 ? '#6a5030' : COL.farm;
+    ctx.fillRect(-15,-25,30,25);
+    ctx.fillStyle = farm.farmHp===1 ? '#4a1808' : '#8a4020';
+    ctx.beginPath(); ctx.moveTo(-20,-25); ctx.lineTo(0,-42); ctx.lineTo(20,-25); ctx.fill();
+    ctx.fillStyle='#3a2010'; ctx.fillRect(-4,-14,8,14);
+    // Wheat fields (only when alive)
+    if(farm.food > 8){
+      ctx.fillStyle=COL.wheat;
+      for(let w=0;w<7;w++){
+        const wh=7+(farm.food/farm.maxFood)*9;
+        ctx.fillRect(-28+w*8,-wh,3,wh);
+      }
+    }
+    if(farm.farmHp===2){
+      ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(-8,-22); ctx.lineTo(-4,-10); ctx.lineTo(-9,-2); ctx.stroke();
+    }
+    break;
   }
 }
 
-// Food indicator
-if(farm.food > 0){
+ctx.restore();
+
+// Smoke puff when damaged (hp<3)
+if(farm.farmHp < 3 && !farm.burning){
+  const smokeA = 0.15 + Math.sin(gameTime*0.004+farm.x*0.001)*0.07;
+  ctx.fillStyle=`rgba(80,70,60,${smokeA})`;
+  ctx.beginPath(); ctx.arc(sx+3, fy-58, 7, 0, Math.PI*2); ctx.fill();
+}
+
+// Food bar (above building)
+if(farm.food > 0 && farm.alive){
   const pct = farm.food / farm.maxFood;
-  ctx.fillStyle='rgba(0,0,0,0.4)';
-  ctx.fillRect(sx-15, GROUND_Y-50, 30, 5);
+  ctx.fillStyle='rgba(0,0,0,0.45)';
+  ctx.fillRect(sx-16, fy-68, 32, 5);
   ctx.fillStyle='#c8a830';
-  ctx.fillRect(sx-15, GROUND_Y-50, 30*pct, 5);
+  ctx.fillRect(sx-16, fy-68, 32*pct, 5);
+}
+
+// HP pips (small squares showing remaining hits)
+if(farm.farmHp < 3 && farm.alive){
+  for(let h=0;h<3;h++){
+    ctx.fillStyle = h < farm.farmHp ? '#cc3a20' : '#3a2020';
+    ctx.fillRect(sx-8+h*7, fy-76, 5, 5);
+  }
 }
 
 // Fire overlay
 if(farm.burning){
-  ctx.fillStyle=`rgba(232,80,32,${0.4+Math.sin(gameTime*0.008)*0.2})`;
-  ctx.fillRect(sx-20, GROUND_Y-45, 40, 45);
+  ctx.fillStyle=`rgba(232,80,32,${0.45+Math.sin(gameTime*0.009)*0.2})`;
+  ctx.fillRect(sx-22, fy-58, 44, 58);
 }
 
 }
