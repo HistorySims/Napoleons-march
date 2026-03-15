@@ -150,7 +150,11 @@ controlledIdx: -1,
 totalDeployed: 0,
 pendingSoldiers: 0,
 inBattle: false,
+sharedFarmTarget: null,
 };
+
+// Moscow city state
+let moscow = { hp: 300, maxHp: 300, burned: false };
 
 // Map features
 let farms = [];
@@ -307,6 +311,22 @@ maxFood: 50,
 alive: true,
 burning: false,
 burnTimer: 0,
+isHouse: false,
+});
+}
+}
+// Extra village houses densely clustered near Moscow (x 8000-11200)
+for(let i=0; i<12; i++){
+const fx = 8100 + i * 280 + (Math.random()-0.5)*120;
+if(!rivers.some(r => Math.abs(r.x - fx)<120)){
+farms.push({
+x: fx,
+food: 20 + Math.floor(Math.random()*15),
+maxFood: 35,
+alive: true,
+burning: false,
+burnTimer: 0,
+isHouse: true,
 });
 }
 }
@@ -430,7 +450,7 @@ return;
 // Burn Moscow choice
 if(phase==='playing' && napoleon.atMoscow){
 // Buttons drawn in HUD
-const btnY = H/2 + 20;
+const btnY = H/2 + 36;
 if(my > btnY && my < btnY+50){
 if(mx > W/2-220 && mx < W/2-20){
 // BURN IT
@@ -483,6 +503,7 @@ break;
 
 function burnMoscow(){
 phase = 'burned';
+moscow.burned = true;
 // Big fire effects
 for(let i=0; i<40; i++){
 particles.push({
@@ -537,6 +558,9 @@ russia.controlledIdx = -1;
 russia.totalDeployed = 0;
 russia.pendingSoldiers = 0;
 russia.inBattle = false;
+russia.sharedFarmTarget = null;
+moscow.hp = moscow.maxHp;
+moscow.burned = false;
 temperature = 15;
 gameTime = 0;
 retreatTime = 0;
@@ -996,7 +1020,17 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
     if(farm.alive && !farm.burning && Math.abs(controlled.x - farm.x)<50){
       farm.burning = true;
       farm.burnTimer = 2000;
-      addMessage('Farm burning! Scorched earth!', 2000);
+      russia.sharedFarmTarget = farm;
+      addMessage(farm.isHouse ? 'House burning!' : 'Farm burning! Scorched earth!', 2000);
+    }
+  }
+  // Attack Moscow directly
+  if(!moscow.burned && Math.abs(controlled.x - MOSCOW_X) < 130){
+    moscow.hp = Math.max(0, moscow.hp - (18 + Math.floor(Math.random()*10)));
+    if(moscow.hp <= 0 && !napoleon.atMoscow){
+      napoleon.atMoscow = true;
+      napoleon.stopped = true;
+      addMessage('Moscow is crumbling! Confirm the burning of the city!', 4000);
     }
   }
 }
@@ -1037,13 +1071,24 @@ if(nearF && nearD < 200){
     }
   }
 } else if(controlled && controlled.alive){
-  // Follow controlled soldier
-  const ddx = controlled.x - s.x, ddy = controlled.y - s.y;
-  const d = Math.hypot(ddx,ddy)||1;
-  if(d > 50){
-    s.x += (ddx/d) * s.speed * 0.5 * (dt/1000);
-    s.y += (ddy/d) * s.speed * 0.3 * (dt/1000);
-    s.facing = ddx > 0 ? 1 : -1;
+  // Follow controlled soldier — check shared farm target first
+  if(russia.sharedFarmTarget && russia.sharedFarmTarget.alive && !russia.sharedFarmTarget.burning){
+    const ft = russia.sharedFarmTarget;
+    const fdx = ft.x - s.x, fdy = ft.y - s.y;
+    const fd = Math.hypot(fdx, fdy) || 1;
+    if(fd > 40){
+      s.x += (fdx/fd) * s.speed * 1.1 * (dt/1000);
+      s.y += (fdy/fd) * s.speed * 0.55 * (dt/1000);
+      s.facing = fdx > 0 ? 1 : -1;
+    }
+  } else {
+    const ddx = controlled.x - s.x, ddy = controlled.y - s.y;
+    const d = Math.hypot(ddx,ddy)||1;
+    if(d > 50){
+      s.x += (ddx/d) * s.speed * 1.0 * (dt/1000);
+      s.y += (ddy/d) * s.speed * 0.5 * (dt/1000);
+      s.facing = ddx > 0 ? 1 : -1;
+    }
   }
 }
 s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
@@ -1092,6 +1137,7 @@ farm.food = Math.max(0, farm.food - dt * 0.02);
 if(farm.burnTimer <= 0 || farm.food <= 0){
 farm.alive = false;
 farm.burning = false;
+if(russia.sharedFarmTarget === farm) russia.sharedFarmTarget = null;
 }
 // Fire particles
 if(Math.random() < 0.3){
@@ -1117,8 +1163,9 @@ color: Math.random()>0.4 ? COL.fire : COL.fireGlow,
 // Layer speeds: far=8%, mid=20% of camera scroll
 function drawParallax(){
 const progress = Math.max(0, Math.min(1, napoleon.x / MAP_WIDTH));
-const camFar = camera.x * 0.08;
-const camMid = camera.x * 0.20;
+const camFar  = camera.x * 0.08;
+const camMid  = camera.x * 0.20;
+const camNear = camera.x * 0.38; // third, closest layer
 const winterFactor = Math.max(0, Math.min(1, (5 - temperature) / 30));
 
 // -- FAR LAYER: distant hills / horizon --
@@ -1176,6 +1223,9 @@ if(progress < 0.18){
   // Moscow outskirts — church/monastery silhouettes on horizon
   drawMoscowOutskirts(camMid, treeY, winterFactor);
 }
+
+// -- NEAR LAYER (38% parallax): close-ground foreground features --
+drawNearLayer(camNear, treeY, winterFactor, progress);
 }
 
 function drawScatteredTrees(camOffset, treeY, winterFactor, type, progress){
@@ -1438,6 +1488,86 @@ for(let i=0;i<7;i++){
 }
 }
 
+function drawNearLayer(camOffset, treeY, winterFactor, progress){
+// Close-foreground features: grass clumps, rocks, debris
+// These scroll fastest, giving strong parallax depth
+const t = gameTime;
+const period = 2800;
+
+if(progress < 0.72){
+  // Grass tufts and small rocks
+  const grassCol = lerpColor(
+    progress < 0.5 ? '#7a9a50' : '#4a6a30',
+    '#b0b0a0', winterFactor
+  );
+  for(let i=0;i<20;i++){
+    const seedX = (i*1123+47) % period;
+    const sx = ((seedX - camOffset % period) + period) % period - 20;
+    if(sx < -20 || sx > W+20) continue;
+    const h = 6 + (i*7)%8;
+    ctx.fillStyle = grassCol;
+    // Grass blades
+    for(let g=0;g<4;g++){
+      const gx = sx - 5 + g*3;
+      const lean = Math.sin(t*0.001 + i*0.7 + g*0.4) * 2;
+      ctx.beginPath();
+      ctx.moveTo(gx, treeY);
+      ctx.quadraticCurveTo(gx+lean, treeY-h*0.6, gx+lean*1.5, treeY-h);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = grassCol;
+      ctx.stroke();
+    }
+    // Occasional small rock
+    if(i%5===0){
+      ctx.fillStyle = lerpColor('#888060','#aaaaaa',winterFactor);
+      ctx.beginPath(); ctx.ellipse(sx+12, treeY-2, 5+i%4, 3, 0, 0, Math.PI*2); ctx.fill();
+    }
+  }
+} else if(progress < 0.92){
+  // Near burned debris: charred stumps, scattered ash
+  for(let i=0;i<12;i++){
+    const seedX = (i*1517+203) % period;
+    const sx = ((seedX - camOffset % period) + period) % period - 20;
+    if(sx < -20 || sx > W+20) continue;
+    // Short charred stump
+    ctx.fillStyle = '#1a1008';
+    ctx.fillRect(sx-3, treeY-8, 6, 8);
+    ctx.fillStyle = `rgba(255,80,10,${0.12+Math.sin(t*0.004+i*1.3)*0.06})`;
+    ctx.fillRect(sx-4, treeY-3, 8, 3);
+    // Ash scatter
+    ctx.fillStyle = 'rgba(80,70,60,0.3)';
+    for(let a=0;a<3;a++) ctx.fillRect(sx-8+a*6, treeY-1, 4, 2);
+  }
+} else {
+  // Moscow outskirts near layer: fallen wall stones, ember glow
+  for(let i=0;i<8;i++){
+    const seedX = (i*1931+337) % period;
+    const sx = ((seedX - camOffset % period) + period) % period - 30;
+    if(sx < -30 || sx > W+30) continue;
+    // Rubble/stones
+    ctx.fillStyle = lerpColor('#2a1a08','#3a2818',winterFactor);
+    ctx.fillRect(sx-8, treeY-5, 16, 5);
+    ctx.fillRect(sx-4, treeY-9, 8, 4);
+    // Ember glow on rubble
+    ctx.fillStyle = `rgba(255,100,10,${0.2+Math.sin(t*0.006+i*1.7)*0.1})`;
+    ctx.fillRect(sx-6, treeY-3, 12, 3);
+  }
+  // Scattered broken wagons close-up
+  for(let i=0;i<4;i++){
+    const seedX = (i*2777+509) % period;
+    const sx = ((seedX - camOffset % period) + period) % period - 40;
+    if(sx < -40 || sx > W+40) continue;
+    ctx.fillStyle = '#1a1008';
+    ctx.save(); ctx.translate(sx, treeY-2); ctx.rotate((i-1)*0.3);
+    ctx.fillRect(-14,-3,28,5);
+    ctx.restore();
+    ctx.strokeStyle='#2a1a08'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(sx-8,treeY+2,5,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(sx+8,treeY+2,5,0,Math.PI*2); ctx.stroke();
+  }
+}
+}
+
 function drawSky(){
 const winterFactor = Math.max(0, Math.min(1, (5 - temperature) / 30));
 const g = ctx.createLinearGradient(0,0,0,GROUND_Y);
@@ -1572,27 +1702,49 @@ ctx.fillRect(sx-12, GROUND_Y-5, 24, 10);
 continue;
 }
 
-// Farmhouse
-ctx.fillStyle = COL.farm;
-ctx.fillRect(sx-15, GROUND_Y-25, 30, 25);
-// Roof
-ctx.fillStyle = '#8a4020';
-ctx.beginPath();
-ctx.moveTo(sx-20, GROUND_Y-25);
-ctx.lineTo(sx, GROUND_Y-42);
-ctx.lineTo(sx+20, GROUND_Y-25);
-ctx.fill();
-// Door
-ctx.fillStyle='#3a2010';
-ctx.fillRect(sx-4, GROUND_Y-14, 8, 14);
-
-// Wheat fields
-if(farm.food > 10){
-  ctx.fillStyle = COL.wheat;
-  for(let w=0; w<8; w++){
-    const wx = sx - 30 + w*8;
-    const wh = 8 + (farm.food/farm.maxFood)*10;
-    ctx.fillRect(wx, GROUND_Y-wh, 3, wh);
+if(farm.isHouse){
+  // Village house (near Moscow suburbs) — larger, with chimney and windows
+  ctx.fillStyle = '#b89a70';
+  ctx.fillRect(sx-18, GROUND_Y-34, 36, 34);
+  // Roof
+  ctx.fillStyle = '#5a2818';
+  ctx.beginPath();
+  ctx.moveTo(sx-22, GROUND_Y-34);
+  ctx.lineTo(sx, GROUND_Y-55);
+  ctx.lineTo(sx+22, GROUND_Y-34);
+  ctx.fill();
+  // Chimney
+  ctx.fillStyle = '#7a5040';
+  ctx.fillRect(sx+8, GROUND_Y-62, 6, 14);
+  // Windows
+  ctx.fillStyle = 'rgba(220,180,100,0.7)';
+  ctx.fillRect(sx-12, GROUND_Y-28, 8, 9);
+  ctx.fillRect(sx+4, GROUND_Y-28, 8, 9);
+  // Door
+  ctx.fillStyle = '#3a2010';
+  ctx.fillRect(sx-4, GROUND_Y-16, 8, 16);
+} else {
+  // Farmhouse
+  ctx.fillStyle = COL.farm;
+  ctx.fillRect(sx-15, GROUND_Y-25, 30, 25);
+  // Roof
+  ctx.fillStyle = '#8a4020';
+  ctx.beginPath();
+  ctx.moveTo(sx-20, GROUND_Y-25);
+  ctx.lineTo(sx, GROUND_Y-42);
+  ctx.lineTo(sx+20, GROUND_Y-25);
+  ctx.fill();
+  // Door
+  ctx.fillStyle='#3a2010';
+  ctx.fillRect(sx-4, GROUND_Y-14, 8, 14);
+  // Wheat fields
+  if(farm.food > 10){
+    ctx.fillStyle = COL.wheat;
+    for(let w=0; w<8; w++){
+      const wx = sx - 30 + w*8;
+      const wh = 8 + (farm.food/farm.maxFood)*10;
+      ctx.fillRect(wx, GROUND_Y-wh, 3, wh);
+    }
   }
 }
 
@@ -1615,51 +1767,210 @@ if(farm.burning){
 }
 
 function drawMoscow(){
-const sx = MOSCOW_X - camera.x;
-if(sx < -400 || sx > W+200) return;
+// Moscow spans from MOSCOW_X-80 to MOSCOW_X+550 (wide city)
+const ox = MOSCOW_X - camera.x; // origin (left edge of city)
+if(ox < -700 || ox > W+100) return;
 
-const burned = (phase==='burned'||phase==='retreat'||phase==='gameover_win');
+const burned = (phase==='burned'||phase==='retreat'||phase==='gameover_win'||moscow.burned);
+const dmgFactor = 1 - moscow.hp / moscow.maxHp; // 0=intact, 1=destroyed
+const t = gameTime;
 
-// Kremlin-style buildings
-const baseCol = burned ? '#3a1a0a' : '#c8a878';
-const roofCol = burned ? '#1a0a0a' : '#2a6a2a';
-const wallCol = burned ? '#4a2a10' : '#e0d0b0';
-
-// Main wall
-ctx.fillStyle = wallCol;
-ctx.fillRect(sx-60, GROUND_Y-80, 300, 80);
-
-// Towers
-for(let t=0; t<4; t++){
-const tx = sx - 40 + t*80;
-ctx.fillStyle = baseCol;
-ctx.fillRect(tx-15, GROUND_Y-120, 30, 120);
-// Onion dome
-ctx.fillStyle = roofCol;
-ctx.beginPath();
-ctx.arc(tx, GROUND_Y-130, 18, Math.PI, 0);
-ctx.fill();
-ctx.beginPath();
-ctx.moveTo(tx-8, GROUND_Y-145);
-ctx.quadraticCurveTo(tx, GROUND_Y-170, tx+8, GROUND_Y-145);
-ctx.fill();
-// Cross
-ctx.fillStyle = burned?'#4a3020':COL.gold;
-ctx.fillRect(tx-1, GROUND_Y-175, 3, 12);
-ctx.fillRect(tx-4, GROUND_Y-172, 9, 3);
-}
-
-// Fire effects for burned Moscow
+// ---- CITY BACKGROUND GLOW ----
 if(burned){
-ctx.fillStyle=`rgba(232,80,32,${0.15+Math.sin(gameTime*0.005)*0.1})`;
-ctx.fillRect(sx-80, GROUND_Y-180, 340, 180);
+  ctx.fillStyle=`rgba(200,50,0,${0.18+Math.sin(t*0.004)*0.07})`;
+  ctx.fillRect(0, 0, W, GROUND_Y);
 }
 
-// Label
-ctx.fillStyle = burned?'#8a3020':'#3a2a1a';
-ctx.font = 'bold 14px Cinzel, serif';
+// ---- KREMLIN WALL (main front wall, crenellated) ----
+const wallTop = GROUND_Y - 72;
+const wallW = 560;
+const wallCol = burned ? lerpColor('#4a2510','#2a1208',0.5) : '#d8c89a';
+const crenCol = burned ? '#3a1e08' : '#c8b888';
+ctx.fillStyle = wallCol;
+ctx.fillRect(ox-40, wallTop, wallW, GROUND_Y-wallTop);
+// Crenellations on top
+ctx.fillStyle = crenCol;
+for(let i=0;i<28;i++){
+  if((i+dmgFactor*28|0) % 3 === 1 && burned) continue; // gaps from damage
+  ctx.fillRect(ox-35+i*20, wallTop-12, 13, 12);
+}
+// Wall horizontal band (decorative)
+ctx.fillStyle = burned ? '#3a1e08' : '#b8a870';
+ctx.fillRect(ox-40, wallTop+15, wallW, 6);
+
+// Gate arch in center of wall
+const gateX = ox + wallW/2 - 40;
+ctx.fillStyle = burned ? '#1a0a04' : '#6a4a20';
+ctx.beginPath();
+ctx.arc(gateX+20, GROUND_Y, 22, Math.PI, 0);
+ctx.fill();
+ctx.fillRect(gateX, GROUND_Y-22, 40, 22);
+
+// ---- HELPER: draw a dramatic video-game onion dome ----
+function drawDome(cx, baseY, size, primaryCol, accentCol, withCross){
+  // Dome bulge (3 arcs stacked: base bulge, neck, tip)
+  ctx.fillStyle = primaryCol;
+  // Base arc (wide bulge)
+  ctx.beginPath();
+  ctx.arc(cx, baseY - size*0.3, size*0.9, Math.PI, 0);
+  ctx.fill();
+  // Upper neck
+  ctx.beginPath();
+  ctx.moveTo(cx - size*0.35, baseY - size*0.3);
+  ctx.quadraticCurveTo(cx - size*0.15, baseY - size*0.7, cx - size*0.12, baseY - size*0.9);
+  ctx.quadraticCurveTo(cx, baseY - size*1.3, cx, baseY - size*1.3);
+  ctx.quadraticCurveTo(cx, baseY - size*1.3, cx + size*0.12, baseY - size*0.9);
+  ctx.quadraticCurveTo(cx + size*0.15, baseY - size*0.7, cx + size*0.35, baseY - size*0.3);
+  ctx.fill();
+  // Pointed spire
+  ctx.beginPath();
+  ctx.moveTo(cx - size*0.1, baseY - size*1.28);
+  ctx.lineTo(cx, baseY - size*1.85);
+  ctx.lineTo(cx + size*0.1, baseY - size*1.28);
+  ctx.fill();
+  // Accent stripe / bands
+  ctx.strokeStyle = accentCol;
+  ctx.lineWidth = size*0.05;
+  ctx.beginPath();
+  ctx.arc(cx, baseY - size*0.35, size*0.82, Math.PI*1.1, Math.PI*0.05, true);
+  ctx.stroke();
+  // Gold ring at neck base
+  ctx.fillStyle = accentCol;
+  ctx.fillRect(cx - size*0.14, baseY - size*0.5, size*0.28, size*0.08);
+  // Cross on top
+  if(withCross && !burned){
+    ctx.fillStyle = accentCol;
+    ctx.fillRect(cx-1.5, baseY-size*1.95, 3, size*0.25);
+    ctx.fillRect(cx-size*0.08, baseY-size*1.88, size*0.16, 2.5);
+    ctx.fillRect(cx-size*0.06, baseY-size*1.82, size*0.12, 2);
+  }
+  // Fire on dome if burned
+  if(burned){
+    ctx.fillStyle=`rgba(255,80,10,${0.3+Math.sin(t*0.006+cx*0.01)*0.15})`;
+    ctx.beginPath(); ctx.arc(cx, baseY-size*0.5, size*0.7, Math.PI, 0); ctx.fill();
+  }
+}
+
+// ---- BACKGROUND BUILDINGS (behind wall) ----
+if(!burned){
+  // Distant buildings peeking above wall
+  const bldgs = [
+    {x:ox+20, h:95, w:38, col:'#c8b890'},
+    {x:ox+90, h:110, w:50, col:'#d8c8a0'},
+    {x:ox+170, h:85, w:42, col:'#c0a878'},
+    {x:ox+270, h:130, w:56, col:'#d4c496'},
+    {x:ox+360, h:100, w:44, col:'#ccc090'},
+    {x:ox+440, h:90, w:38, col:'#c8bc88'},
+  ];
+  for(const b of bldgs){
+    ctx.fillStyle = b.col;
+    ctx.fillRect(b.x, GROUND_Y-b.h, b.w, b.h-72);
+    // Roof ridge
+    ctx.fillStyle = lerpColor(b.col,'#8a7050',0.3);
+    ctx.fillRect(b.x, GROUND_Y-b.h, b.w, 6);
+    // Window rows
+    ctx.fillStyle = 'rgba(60,40,10,0.5)';
+    for(let row=0;row<2;row++){
+      for(let col=0;col<3;col++){
+        ctx.fillRect(b.x+5+col*12, GROUND_Y-b.h+14+row*18, 8, 11);
+      }
+    }
+  }
+} else {
+  // Burned building hulks
+  const bldgs = [
+    {x:ox+20, h:80, w:38},{x:ox+90, h:95, w:50},{x:ox+170, h:70, w:42},
+    {x:ox+270, h:110, w:56},{x:ox+360, h:85, w:44},{x:ox+440, h:75, w:38},
+  ];
+  for(const b of bldgs){
+    ctx.fillStyle = '#1a0e06';
+    ctx.fillRect(b.x, GROUND_Y-b.h, b.w, b.h-60);
+    // Jagged burned tops
+    ctx.fillStyle = '#120a04';
+    for(let w=0;w<5;w++) ctx.fillRect(b.x+w*8, GROUND_Y-b.h-(w%2)*10, 7, b.h-52+(w%2)*10);
+    // Orange glow
+    ctx.fillStyle=`rgba(255,90,10,${0.22+Math.sin(t*0.005+b.x*0.003)*0.1})`;
+    ctx.fillRect(b.x+2, GROUND_Y-b.h+b.h-70, b.w-4, 8);
+    // Smoke
+    ctx.strokeStyle='rgba(30,20,10,0.5)'; ctx.lineWidth=5;
+    ctx.beginPath();
+    const smkX = b.x+b.w/2;
+    for(let y=GROUND_Y-b.h; y>GROUND_Y-b.h-90; y-=5){
+      const wx=smkX+Math.sin(t*0.0013+y*0.09+b.x*0.01)*7;
+      if(y===GROUND_Y-b.h) ctx.moveTo(wx,y); else ctx.lineTo(wx,y);
+    }
+    ctx.stroke();
+  }
+}
+
+// ---- TOWERS + DOMES ----
+// Tower specs: [xOffset, height, domeSize, primaryCol, accentCol]
+const towers = [
+  { dx:30,  h:100, ds:22, pc: burned?'#2a1208':'#2a6a2a', ac: burned?'#5a2010':COL.gold, isMain:false },
+  { dx:130, h:115, ds:30, pc: burned?'#1a0a04':'#1a4a8a', ac: burned?'#5a1a08':COL.gold, isMain:false },
+  { dx:240, h:145, ds:48, pc: burned?'#300c04':'#7a1a10', ac: burned?'#7a3010':COL.gold, isMain:true  }, // central cathedral — tallest
+  { dx:370, h:118, ds:32, pc: burned?'#1a0c04':'#c8a020', ac: burned?'#4a2010':COL.gold, isMain:false },
+  { dx:460, h:105, ds:24, pc: burned?'#2a1208':'#2a6a2a', ac: burned?'#5a2010':COL.gold, isMain:false },
+];
+
+for(const tw of towers){
+  const tx = ox + tw.dx;
+  const towerBaseY = GROUND_Y - tw.h;
+
+  // Tower body
+  ctx.fillStyle = burned ? '#241008' : '#e8d8b0';
+  ctx.fillRect(tx-16, towerBaseY, 32, tw.h-72);
+  // Decorative bands
+  ctx.fillStyle = burned ? '#1a0808' : '#c8b888';
+  ctx.fillRect(tx-16, towerBaseY, 32, 7);
+  ctx.fillRect(tx-16, towerBaseY + (tw.h-72)*0.5, 32, 4);
+  // Window
+  ctx.fillStyle = burned ? '#120804' : 'rgba(50,35,10,0.6)';
+  ctx.fillRect(tx-5, towerBaseY+12, 10, 14);
+  if(tw.isMain){
+    ctx.fillRect(tx-8, towerBaseY+30, 16, 12);
+  }
+  // Bell arch on top tower section
+  if(!burned){
+    ctx.fillStyle = '#d0c090';
+    ctx.fillRect(tx-18, towerBaseY-20, 36, 20);
+    ctx.fillStyle = 'rgba(50,35,10,0.6)';
+    ctx.beginPath(); ctx.arc(tx, towerBaseY-8, 9, Math.PI, 0); ctx.fill();
+  }
+
+  // Draw the onion dome
+  drawDome(tx, towerBaseY - (tw.isMain?4:0), tw.ds, tw.pc, tw.ac, true);
+}
+
+// Kremlin bell tower (Ivan the Great) on far left — thin and very tall
+const btwX = ox - 10;
+ctx.fillStyle = burned ? '#1a0e06' : '#e0d0a8';
+ctx.fillRect(btwX-8, GROUND_Y-185, 16, 185-72);
+ctx.fillStyle = burned ? '#120a04' : '#c8b880';
+for(let i=0;i<4;i++) ctx.fillRect(btwX-10, GROUND_Y-185+i*40, 20, 6);
+if(!burned){
+  ctx.fillStyle='rgba(50,35,10,0.55)';
+  ctx.beginPath(); ctx.arc(btwX, GROUND_Y-175, 8, Math.PI, 0); ctx.fill();
+}
+drawDome(btwX, GROUND_Y-185, 14, burned?'#2a1208':'#1a3a8a', burned?'#5a2010':COL.gold, true);
+
+// ---- HP BAR (when Moscow is being attacked) ----
+if(!burned && moscow.hp < moscow.maxHp){
+  const pct = moscow.hp / moscow.maxHp;
+  const barX = ox + wallW/2 - 100;
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.beginPath(); ctx.roundRect(barX-4, GROUND_Y-100, 208, 20, 4); ctx.fill();
+  ctx.fillStyle = pct > 0.5 ? '#c8a830' : pct > 0.25 ? '#c87020' : '#c82020';
+  ctx.fillRect(barX, GROUND_Y-97, 200*pct, 14);
+  ctx.fillStyle='#fff'; ctx.font='9px Cinzel,serif'; ctx.textAlign='center';
+  ctx.fillText('MOSCOW', barX+100, GROUND_Y-88);
+}
+
+// ---- LABEL ----
+ctx.fillStyle = burned ? '#8a3020' : '#3a2a1a';
+ctx.font = 'bold 15px Cinzel, serif';
 ctx.textAlign = 'center';
-ctx.fillText('MOSCOW', sx+90, GROUND_Y+20);
+ctx.fillText('МОСКВА', ox + wallW/2 - 20, GROUND_Y+22);
 }
 
 // -- SOLDIER SPRITES --
@@ -2260,30 +2571,44 @@ my += 32;
 }
 
 function drawMoscowChoice(){
-ctx.fillStyle='rgba(0,0,0,0.7)';
+ctx.fillStyle='rgba(0,0,0,0.78)';
 ctx.fillRect(0,0,W,H);
 
+const moscowAttacked = moscow.hp < moscow.maxHp;
+
 ctx.fillStyle='#c8a040';
-ctx.font='bold 26px Cinzel, serif'; ctx.textAlign='center';
-ctx.fillText('Napoleon has reached Moscow!', W/2, H/2-60);
+ctx.font='bold 24px Cinzel, serif'; ctx.textAlign='center';
+ctx.fillText(moscowAttacked ? 'Moscow is under attack!' : 'Napoleon has reached Moscow!', W/2, H/2-70);
 
-ctx.fillStyle='#ccc'; ctx.font='15px "IM Fell English", serif';
-ctx.fillText('The city is yours to defend or destroy.', W/2, H/2-30);
-ctx.fillText('Will you burn Moscow to deny Napoleon shelter and supplies?', W/2, H/2-8);
+ctx.fillStyle='#e0b060'; ctx.font='bold 14px Cinzel, serif';
+ctx.fillText('Population: ~250,000 civilians', W/2, H/2-44);
 
-const btnY = H/2+20;
+ctx.fillStyle='#ccc'; ctx.font='14px "IM Fell English", serif';
+ctx.fillText('Moscow shelters one quarter of a million souls.', W/2, H/2-22);
+ctx.fillText('Burning it will deny Napoleon all shelter and supplies —', W/2, H/2-2);
+ctx.fillText('but 250,000 people will lose their homes.', W/2, H/2+18);
+
+const btnY = H/2+36;
 
 // BURN button
 ctx.fillStyle='#8a2020';
 ctx.beginPath(); ctx.roundRect(W/2-220, btnY, 200, 50, 8); ctx.fill();
-ctx.fillStyle='#ff8040'; ctx.font='bold 18px Cinzel, serif';
-ctx.fillText('🔥 Burn Moscow', W/2-120, btnY+32);
+ctx.strokeStyle='#c04020'; ctx.lineWidth=1.5;
+ctx.beginPath(); ctx.roundRect(W/2-220, btnY, 200, 50, 8); ctx.stroke();
+ctx.fillStyle='#ff8040'; ctx.font='bold 16px Cinzel, serif';
+ctx.fillText('\uD83D\uDD25 Burn Moscow', W/2-120, btnY+20);
+ctx.fillStyle='rgba(255,120,60,0.7)'; ctx.font='11px "IM Fell English", serif';
+ctx.fillText('250,000 lose everything', W/2-120, btnY+38);
 
-// SURRENDER button
+// SURRENDER / HOLD button
 ctx.fillStyle='#2a4a2a';
 ctx.beginPath(); ctx.roundRect(W/2+20, btnY, 200, 50, 8); ctx.fill();
-ctx.fillStyle='#80c080'; ctx.font='bold 18px Cinzel, serif';
-ctx.fillText('Surrender', W/2+120, btnY+32);
+ctx.strokeStyle='#3a7a3a'; ctx.lineWidth=1.5;
+ctx.beginPath(); ctx.roundRect(W/2+20, btnY, 200, 50, 8); ctx.stroke();
+ctx.fillStyle='#80c080'; ctx.font='bold 16px Cinzel, serif';
+ctx.fillText('Hold the City', W/2+120, btnY+20);
+ctx.fillStyle='rgba(160,220,160,0.7)'; ctx.font='11px "IM Fell English", serif';
+ctx.fillText('Napoleon wins', W/2+120, btnY+38);
 }
 
 function getSeasonLabel(){
