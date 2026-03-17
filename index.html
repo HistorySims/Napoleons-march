@@ -205,6 +205,7 @@ if(mdSend) mdSend.addEventListener('click', () => {
 let effects = [];
 let particles = [];
 let messages = [];
+let ghosts = [];
 
 // -- INPUT --
 window.addEventListener('keydown', e => { keys[e.code]=true; });
@@ -530,7 +531,15 @@ r: 4+Math.random()*8,
 color: Math.random()>0.5 ? COL.fire : COL.fireGlow,
 });
 }
-// Napoleon gets NO food from Moscow
+// Napoleon gets NO food from Moscow — immediately begin retreat
+napoleon.retreating = true;
+napoleon.speed = 28;
+napoleon.stopped = false;
+retreatTime = 0;
+// Flip all French soldiers to face west (left)
+for(const s of napoleon.soldiers){
+  if(s.alive && !s.dying) s.facing = -1;
+}
 addMessage('Moscow burns! Napoleon has nothing. He must retreat into winter.', 5000);
 }
 
@@ -561,6 +570,34 @@ addMessage(`${count} soldier${count>1?'s':''} deployed! WASD to move, Space to a
 addMessage('Camera follows you. Raid farms, attack soldiers!', 2000);
 }
 
+function updateBurned(dt){
+retreatTime += dt;
+// Temperature plummets as retreat begins
+const retreatProgress = retreatTime / 120000;
+temperature = 0 - retreatProgress * 35;
+
+// Napoleon himself walks west
+napoleon.x -= napoleon.speed * (dt/1000);
+
+// Russian forces keep fighting
+updateRussianForces(dt);
+updateCombat(dt);
+updateDying(dt);
+
+// Camera follows player or Napoleon
+let focusX = napoleon.x - 350;
+if(russia.inBattle && russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx]?.alive){
+  focusX = russia.deployed[russia.controlledIdx].x - 500;
+}
+camera.x += (focusX - camera.x) * Math.min(1, dt/300);
+camera.x = Math.max(0, Math.min(MAP_WIDTH - W, camera.x));
+
+// Transition to full retreat once Napoleon moves a bit west
+if(napoleon.x < MOSCOW_X - 200){
+  phase = 'retreat';
+}
+}
+
 function startGame(){
 phase = 'playing';
 buildMap();
@@ -581,6 +618,7 @@ camera.x = 0;
 effects = [];
 particles = [];
 messages = [];
+ghosts = [];
 addMessage('June 1812: Napoleon crosses into Russia with 100,000 men.', 4000);
 addMessage('Use + to add soldiers, then Send into Battle to deploy them.', 5000);
 }
@@ -614,6 +652,16 @@ if(p.life<=0) particles.splice(i,1);
 
 if(phase==='playing') updatePlaying(dt);
 else if(phase==='retreat') updateRetreat(dt);
+else if(phase==='burned') updateBurned(dt);
+
+// Update ghosts (floating emoji particles)
+for(let i=ghosts.length-1; i>=0; i--){
+  const g = ghosts[i];
+  g.y -= g.vy * (dt/1000);
+  g.life -= dt;
+  if(g.life <= 0) ghosts.splice(i,1);
+}
+
 syncMobilePanel();
 }
 
@@ -662,9 +710,9 @@ const targetX = napoleon.x + (s.x - napoleon.x) * 0.3 + (Math.random()-0.5)*2;
 s.x += (targetX - s.x) * 0.01 - napoleon.speed * (dt/1000) * 0.9;
 s.walkTimer += dt;
 
-  // Disease progression continues into retreat
+  // Disease progression continues into retreat (faster in the cold)
   if(s.diseased && !s.dying){
-    s.sickness = Math.min(1, s.sickness + dt * 0.0005);
+    s.sickness = Math.min(1, s.sickness + dt * 0.00015);
     if(s.sickness >= 1){ s.dying = true; s.dyingMs = 2000; s.deathType = 'disease'; }
   }
   // Winter attrition
@@ -833,9 +881,9 @@ if(s.knockTimer > 0){
   if(s.knockTimer <= 0) s.knockVX = 0;
 }
 
-// Disease progression for already-diseased soldiers
+// Disease progression for already-diseased soldiers (~11s visible green walk before death)
 if(s.diseased && !s.dying){
-  s.sickness = Math.min(1, s.sickness + dt * 0.0004);
+  s.sickness = Math.min(1, s.sickness + dt * 0.00009);
   if(s.sickness >= 1){
     s.dying = true; s.dyingMs = 2000; s.deathType = 'disease';
   }
@@ -920,17 +968,22 @@ if(s.role === 'vanguard'){
 }
 }
 
-// Disease at <50% food — green sickness spreads through ranks
+// Disease spreads from 25% of the march onward — accelerates as food drops
+// Historical: >50% of the Grande Armée died before reaching Moscow
+const marchProgress = napoleon.x / MOSCOW_X;
 const foodRatio = napoleon.food / napoleon.maxFood;
-if(foodRatio < 0.5){
-const sickRate = (0.5 - foodRatio) * 2; // 0 at 50% food → 1 at 0% food
-const infChance = sickRate * 0.000012 * dt;
-for(const s of napoleon.soldiers){
-  if(s.alive && !s.dying && !s.diseased && Math.random() < infChance){
-    s.diseased = true;
-    s.sickness = 0.1; // starts at faint green
+if(marchProgress > 0.25){
+  // Base rate from march distance; starving amplifies heavily
+  const distFactor = Math.min(1, (marchProgress - 0.25) / 0.75); // 0→1 over remaining march
+  const starveFactor = Math.max(0, 1 - foodRatio * 2);            // 0 at 50%+ food, 1 at 0%
+  const sickRate = distFactor * 0.35 + starveFactor * 0.65;
+  const infChance = sickRate * 0.000055 * dt; // ~54 of 90 soldiers infected before Moscow
+  for(const s of napoleon.soldiers){
+    if(s.alive && !s.dying && !s.diseased && Math.random() < infChance){
+      s.diseased = true;
+      s.sickness = 0.05; // starts at very faint green
+    }
   }
-}
 }
 
 // Starvation
@@ -950,7 +1003,16 @@ function updateDying(dt){
 for(const s of napoleon.soldiers){
 if(s.dying){
 s.dyingMs -= dt;
-if(s.dyingMs <= 0){ s.alive = false; s.dying = false; }
+if(s.dyingMs <= 0){
+  if(s.deathType === 'freeze'){
+    // Persist as blue frozen corpse on the ground
+    s.frozenBody = true;
+  } else if(s.deathType === 'disease'){
+    // Spawn rising ghost
+    ghosts.push({ x: s.x, y: s.y, vy: 55, life: 2200, maxLife: 2200 });
+  }
+  s.alive = false; s.dying = false;
+}
 }
 if(s.flash > 0) s.flash -= dt;
 if(s.knockTimer > 0){ s.x += s.knockVX*(dt/1000); s.knockTimer=Math.max(0,s.knockTimer-dt); if(s.knockTimer<=0)s.knockVX=0; }
@@ -1159,16 +1221,37 @@ for(const r of russia.deployed){
   if(d < nearD){ nearR=r; nearD=d; }
 }
 
-if(nearR && nearD < 35){
-  // French attacks Russian — 3 hits to kill
-  if(Math.random() < 0.0018 * dt){
-    nearR.hp -= 34 + Math.floor(Math.random()*4);
-    nearR.flash = 200;
-    // Knock Russian back away from French
-    nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
-    nearR.knockTimer = 180;
-    if(nearR.hp <= 0 && !nearR.dying){
-      nearR.dying = true; nearR.dyingMs = 800;
+if(napoleon.retreating){
+  // During retreat: walk west unless a Russian engages within 100px
+  if(nearR && nearD < 100){
+    // Turn to fight
+    f.facing = nearR.x > f.x ? 1 : -1;
+    if(nearD < 35){
+      if(Math.random() < 0.0018 * dt){
+        nearR.hp -= 34 + Math.floor(Math.random()*4);
+        nearR.flash = 200;
+        nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
+        nearR.knockTimer = 180;
+        if(nearR.hp <= 0 && !nearR.dying){ nearR.dying = true; nearR.dyingMs = 800; }
+      }
+    }
+  } else {
+    // March west
+    f.facing = -1;
+    f.x -= napoleon.speed * 0.75 * (dt/1000);
+    // Cluster loosely around Napoleon
+    const targetX = napoleon.x + (f.offsetY !== undefined ? f.offsetY * 0.15 : 0) + (Math.random()-0.5)*40;
+    f.x += (targetX - f.x) * 0.003;
+  }
+} else {
+  if(nearR && nearD < 35){
+    // French attacks Russian — 3 hits to kill
+    if(Math.random() < 0.0018 * dt){
+      nearR.hp -= 34 + Math.floor(Math.random()*4);
+      nearR.flash = 200;
+      nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
+      nearR.knockTimer = 180;
+      if(nearR.hp <= 0 && !nearR.dying){ nearR.dying = true; nearR.dyingMs = 800; }
     }
   }
 }
@@ -2264,7 +2347,7 @@ ctx.fillText('МОСКВА', ox + wallW/2 - 20, GROUND_Y+22);
 // -- SOLDIER SPRITES --
 
 function drawFrenchSoldier(s){
-if(!s.alive && !s.dying) return;
+if(!s.alive && !s.dying && !s.frozenBody) return;
 const sx = Math.round(s.x - camera.x);
 const sy = Math.round(s.y);
 if(sx < -30 || sx > W+30) return;
@@ -2272,8 +2355,14 @@ if(sx < -30 || sx > W+30) return;
 ctx.save();
 ctx.translate(sx, sy);
 
-if(s.dying){
-const alpha = Math.max(0, s.dyingMs / 800);
+if(s.frozenBody){
+// Persistent frozen corpse — blue, sideways on ground
+ctx.filter = `saturate(0.15) brightness(1.5) hue-rotate(195deg)`;
+ctx.globalAlpha = 0.85;
+ctx.rotate(Math.PI/2 * (s.facing || 1));
+} else if(s.dying){
+const dyingDuration = (s.deathType === 'freeze') ? 1500 : 2000;
+const alpha = Math.max(0, s.dyingMs / dyingDuration);
 ctx.globalAlpha = alpha;
 if(s.deathType==='freeze'){
 ctx.filter = `saturate(0.2) brightness(1.4) hue-rotate(195deg)`;
@@ -3055,8 +3144,8 @@ drawTitle(); return;
 if(phase==='gameover_win'||phase==='gameover_lose'||phase==='napoleon_wins'||phase==='burned'){
 // Draw the world behind the overlay
 drawSky(); drawParallax(); drawGround(); drawRivers(); drawBridges(); drawFarms(); drawMoscow(); drawSupplyWagons();
-// Sort and draw all soldiers
-const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying), ...russia.deployed.filter(s=>s.alive||s.dying)];
+// Sort and draw all soldiers (include frozen corpses)
+const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying||s.frozenBody), ...russia.deployed.filter(s=>s.alive||s.dying)];
 all.sort((a,b)=>a.y-b.y);
 for(const s of all){
 if(napoleon.soldiers.includes(s)) drawFrenchSoldier(s);
@@ -3064,6 +3153,7 @@ else drawRussianSoldier(s);
 }
 drawNapoleon();
 drawParticles();
+drawGhosts();
 drawEndScreen();
 return;
 }
@@ -3077,8 +3167,8 @@ drawFarms();
 drawMoscow();
 drawSupplyWagons();
 
-// Z-sort all soldiers
-const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying), ...russia.deployed.filter(s=>s.alive||s.dying)];
+// Z-sort all soldiers (include frozen corpses)
+const all = [...napoleon.soldiers.filter(s=>s.alive||s.dying||s.frozenBody), ...russia.deployed.filter(s=>s.alive||s.dying)];
 all.push({_isNapoleon:true, y:GROUND_Y+35, alive:true});
 all.sort((a,b)=>a.y-b.y);
 for(const s of all){
@@ -3088,6 +3178,7 @@ else drawRussianSoldier(s);
 }
 
 drawParticles();
+drawGhosts();
 drawBridgeBuildIndicator();
 drawHUD();
 }
@@ -3101,6 +3192,24 @@ ctx.fillStyle=p.color;
 ctx.beginPath(); ctx.arc(sx, p.y, p.r*alpha, 0, Math.PI*2); ctx.fill();
 ctx.restore();
 }
+}
+
+function drawGhosts(){
+ctx.save();
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+for(const g of ghosts){
+  const sx = g.x - camera.x;
+  if(sx < -40 || sx > W+40) continue;
+  const alpha = Math.max(0, g.life / g.maxLife);
+  const scale = 0.6 + (1 - g.life/g.maxLife) * 0.8;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = `${Math.round(22*scale)}px serif`;
+  ctx.fillText('👻', sx, g.y);
+  ctx.restore();
+}
+ctx.restore();
 }
 
 // -- GAME LOOP --
