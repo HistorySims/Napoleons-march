@@ -208,6 +208,7 @@ let particles = [];
 let messages = [];
 let ghosts = [];
 let snowflakes = [];
+let foodIndicators = []; // {text, color, life, maxLife, floatY}
 
 // -- INPUT --
 window.addEventListener('keydown', e => { keys[e.code]=true; });
@@ -629,6 +630,8 @@ particles = [];
 messages = [];
 ghosts = [];
 snowflakes = [];
+foodIndicators = [];
+napoleon._lastFood = 800;
 addMessage('June 1812: Napoleon crosses into Russia with 100,000 men.', 4000);
 addMessage('Use + to add soldiers, then Send into Battle to deploy them.', 5000);
 }
@@ -670,6 +673,23 @@ for(let i=ghosts.length-1; i>=0; i--){
   g.y -= g.vy * (dt/1000);
   g.life -= dt;
   if(g.life <= 0) ghosts.splice(i,1);
+}
+
+// Food gain indicator — detect when food increases during playing/retreat
+if(phase==='playing' || phase==='retreat'){
+  const foodDelta = napoleon.food - (napoleon._lastFood || napoleon.food);
+  if(foodDelta > 2){
+    foodIndicators.push({text:'+', color:'#44ee66', life:1100, maxLife:1100, floatY:0});
+  }
+}
+napoleon._lastFood = napoleon.food;
+
+// Tick food indicators
+for(let i=foodIndicators.length-1; i>=0; i--){
+  const ind = foodIndicators[i];
+  ind.life -= dt;
+  ind.floatY = (1 - ind.life / ind.maxLife) * 20;
+  if(ind.life <= 0) foodIndicators.splice(i, 1);
 }
 
 syncMobilePanel();
@@ -1000,6 +1020,7 @@ if(s.role === 'vanguard'){
       s.exclamTimer = 1800;
       s.burntTarget = null;
       s.raidReturning = true;
+      foodIndicators.push({text:'−', color:'#ee3333', life:1100, maxLife:1100, floatY:0});
     }
   } else {
     // Return to army with food — laden, so noticeably slower
@@ -2089,13 +2110,28 @@ const sx = farm.x - camera.x;
 const fy = farm.y || GROUND_Y + 16; // y anchor (base of building)
 if(sx < -90 || sx > W+90) continue;
 
-// Charred remains
+// Charred remains with lingering smoke
 if(!farm.alive && !farm.burning){
   ctx.fillStyle='#1a1414';
   ctx.fillRect(sx-14, fy-4, 28, 8);
   // Ash scatter
   ctx.fillStyle='rgba(60,50,40,0.4)';
   for(let a=0;a<5;a++) ctx.fillRect(sx-20+a*9, fy, 6, 3);
+  // Drifting smoke wisps
+  ctx.save();
+  for(let k=0; k<3; k++){
+    const t = (gameTime * 0.00055 + k * 0.38) % 1;
+    const px = sx + Math.sin(gameTime * 0.001 + k * 2.3) * 5 + (k-1) * 9;
+    const py = fy - 6 - t * 44;
+    const fade = t < 0.18 ? t/0.18 : t > 0.65 ? (1-t)/0.35 : 1;
+    ctx.globalAlpha = fade * 0.38;
+    const g = 88 + Math.round(t * 38);
+    ctx.fillStyle = `rgb(${g},${g-4},${g-8})`;
+    ctx.beginPath();
+    ctx.arc(px, py, 3 + t * 8, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
   continue;
 }
 
@@ -2905,36 +2941,60 @@ function drawHUD(){
 // Temperature gauge (top right)
 ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(W-190,8,182,50,8); ctx.fill();
-ctx.fillStyle = temperature > 5 ? '#a0c080' : temperature > -5 ? '#c8c040' : temperature > -15 ? '#60a0e0' : '#4060ff';
+const shadow = () => { ctx.shadowColor='rgba(0,0,0,0.85)'; ctx.shadowBlur=4; };
+const noShadow = () => { ctx.shadowColor='transparent'; ctx.shadowBlur=0; };
+
+ctx.fillStyle = temperature > 5 ? '#b8e890' : temperature > -5 ? '#f0e050' : temperature > -15 ? '#80c8ff' : '#88aaff';
 ctx.font='bold 22px Cinzel, serif';
 ctx.textAlign='right';
+shadow();
 ctx.fillText(`${Math.round(temperature)}°C`, W-16, 36);
-ctx.fillStyle='#aaa'; ctx.font='11px "IM Fell English", serif';
+ctx.fillStyle='#ddeedd'; ctx.font='11px "IM Fell English", serif';
 ctx.fillText(getSeasonLabel(), W-16, 52);
+noShadow();
 
 // French army stats (top center)
 const aliveF = napoleon.soldiers.filter(s=>s.alive&&!s.dying).length;
 ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(W/2-150,8,300,50,8); ctx.fill();
-ctx.fillStyle=COL.frenchLight; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='center';
+ctx.fillStyle='#c8d8ff'; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='center';
+shadow();
 ctx.fillText(`Grande Armée: ${aliveF} / 100`, W/2, 28);
+noShadow();
 // Food bar
 const foodPct = Math.max(0, napoleon.food / napoleon.maxFood);
 ctx.fillStyle='#333'; ctx.fillRect(W/2-100,36,200,12);
 ctx.fillStyle = foodPct > 0.3 ? '#c8a830' : '#c84020';
 ctx.fillRect(W/2-100,36,200*foodPct,12);
 ctx.strokeStyle='#555'; ctx.lineWidth=0.5; ctx.strokeRect(W/2-100,36,200,12);
-ctx.fillStyle='#ddd'; ctx.font='9px "IM Fell English", serif';
+ctx.fillStyle='#ffffff'; ctx.font='bold 9px "IM Fell English", serif';
+shadow();
 ctx.fillText(`Food: ${Math.floor(napoleon.food)}`, W/2, 46);
+noShadow();
+
+// Food delta indicators — float and fade right of the bar
+for(const ind of foodIndicators){
+  const alpha = Math.min(1, ind.life / 280);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = ind.color;
+  ctx.font = 'bold 13px Cinzel, serif';
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 4;
+  ctx.fillText(ind.text, W/2 + 108, 44 - ind.floatY);
+  ctx.restore();
+}
 
 // Russian forces (top left)
 const aliveR = russia.deployed.filter(s=>s.alive&&!s.dying).length;
 ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(8,8,180,50,8); ctx.fill();
-ctx.fillStyle=COL.russianLight; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='left';
+ctx.fillStyle='#90eea0'; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='left';
+shadow();
 ctx.fillText(`Russian Army`, 16, 28);
-ctx.fillStyle='#aaa'; ctx.font='11px "IM Fell English", serif';
+ctx.fillStyle='#ccffcc'; ctx.font='11px "IM Fell English", serif';
 ctx.fillText(`Deployed: ${aliveR}  |  Reserve: ${russia.bank}`, 16, 46);
+noShadow();
 
 // Deploy box (bottom left)
 drawDeployBox();
@@ -3068,13 +3128,16 @@ let my = H/2 - 50;
 for(const msg of messages){
 const alpha = Math.min(1, msg.life / 500);
 ctx.save(); ctx.globalAlpha=alpha;
-ctx.fillStyle='rgba(0,0,0,0.7)';
-const tw = ctx.measureText(msg.text).width || 300;
-ctx.beginPath(); ctx.roundRect(W/2-tw/2-20, my-8, tw+40, 26, 6); ctx.fill();
-ctx.fillStyle='#ffeedd';
 ctx.font='13px "IM Fell English", serif';
 ctx.textAlign='center';
+const tw = Math.max(200, ctx.measureText(msg.text).width);
+ctx.fillStyle='rgba(0,0,0,0.72)';
+ctx.beginPath(); ctx.roundRect(W/2-tw/2-20, my-8, tw+40, 26, 6); ctx.fill();
+ctx.fillStyle='#fff8ee';
+ctx.shadowColor='rgba(0,0,0,0.9)';
+ctx.shadowBlur=5;
 ctx.fillText(msg.text, W/2, my+8);
+ctx.shadowColor='transparent'; ctx.shadowBlur=0;
 ctx.restore();
 my += 32;
 }
