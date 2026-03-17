@@ -408,8 +408,8 @@ const x = 80 + Math.random()*180;
 const s = createFrenchSoldier(x, undefined, 'column');
 napoleon.soldiers.push(s);
 }
-// Raiders: soldiers that visibly detach to forage farms
-for(let i=0; i<10; i++){
+// Raiders: small parties of 2-3 that visibly detach to forage farms
+for(let i=0; i<3; i++){
 const x = 120 + Math.random()*150;
 const s = createFrenchSoldier(x, undefined, 'raider');
 napoleon.soldiers.push(s);
