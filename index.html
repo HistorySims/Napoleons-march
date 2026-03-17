@@ -1072,7 +1072,17 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
 
 }
 
-// AI soldiers follow controlled soldier or attack nearest French
+// AI soldiers: follow player first; join combat only when player is fighting
+// Check if controlled player is currently fighting (near a French soldier)
+const controlled2 = russia.controlledIdx >= 0 ? russia.deployed[russia.controlledIdx] : null;
+let playerNearFrench = false;
+if(controlled2 && controlled2.alive){
+  for(const f of napoleon.soldiers){
+    if(!f.alive||f.dying) continue;
+    if(Math.hypot(f.x-controlled2.x, f.y-controlled2.y) < 180){ playerNearFrench = true; break; }
+  }
+}
+
 for(let i=0; i<russia.deployed.length; i++){
 const s = russia.deployed[i];
 if(!s.alive || s.dying || s.controlled) continue;
@@ -1087,7 +1097,9 @@ for(const f of napoleon.soldiers){
   if(d < nearD){ nearF=f; nearD=d; }
 }
 
-if(nearF && nearD < 200){
+// Engage French only if: player is fighting (join the fight) OR enemy is right on top of us
+const engageRange = playerNearFrench ? 180 : 50; // self-defence only when player is focused elsewhere
+if(nearF && nearD < engageRange){
   // Attack
   const ddx = nearF.x - s.x, ddy = nearF.y - s.y;
   const dlen = Math.hypot(ddx,ddy)||1;
@@ -1743,14 +1755,14 @@ if(sx < -100 || sx > W+100) continue;
 
 const winterFactor = Math.max(0, Math.min(1, (-temperature)/15));
 
-// River water — spans entire play area height
+// River water — from ground line downward
 ctx.fillStyle = lerpColor(COL.water, '#8a8a9a', winterFactor);
-ctx.fillRect(sx - river.width/2, LANE_TOP, river.width, H-LANE_TOP+5);
+ctx.fillRect(sx - river.width/2, GROUND_Y - 4, river.width, H-GROUND_Y+8);
 
 // Ice sheen
 if(winterFactor > 0.3){
   ctx.fillStyle = `rgba(180,200,220,${winterFactor*0.4})`;
-  ctx.fillRect(sx - river.width/2, LANE_TOP, river.width, H-LANE_TOP+5);
+  ctx.fillRect(sx - river.width/2, GROUND_Y - 4, river.width, H-GROUND_Y+8);
 }
 
 // Ripples
@@ -1777,9 +1789,9 @@ if(sx < -100 || sx > W+100) continue;
 const bw = bridge.width + 14; // total span
 const bLeft = sx - bw/2;
 const bRight = sx + bw/2;
-// Road deck sits at GROUND_Y+22; truss extends up to GROUND_Y-18
-const deckY = GROUND_Y + 22;
-const trussTopY = GROUND_Y - 18;
+// Road deck flush with road surface; truss rises just above ground line
+const deckY = GROUND_Y + 32;
+const trussTopY = GROUND_Y + 4;
 const deckH = 16;
 
 if(!bridge.intact){
