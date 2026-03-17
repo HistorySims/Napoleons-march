@@ -151,6 +151,7 @@ totalDeployed: 0,
 pendingSoldiers: 0,
 inBattle: false,
 sharedFarmTarget: null,
+sharedBridgeTarget: null,
 };
 
 // Moscow city state
@@ -609,6 +610,7 @@ russia.totalDeployed = 0;
 russia.pendingSoldiers = 0;
 russia.inBattle = false;
 russia.sharedFarmTarget = null;
+russia.sharedBridgeTarget = null;
 moscow.hp = moscow.maxHp;
 moscow.burned = false;
 temperature = 15;
@@ -1092,13 +1094,15 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
       break; // one hit per swing
     }
   }
-  // Attack bridges
+  // Attack bridges — wide hitbox covering full lane width at bridge
   for(const b of bridges){
-    if(b.intact && Math.abs(controlled.x - b.x) < 50 && controlled.y < GROUND_Y + 20){
+    if(b.intact && Math.abs(controlled.x - b.x) < 70 && Math.abs(controlled.y - (GROUND_Y + 80)) < 80){
       b.hp -= 15;
+      russia.sharedBridgeTarget = b;
       addMessage(`Bridge damaged! (${Math.max(0,b.hp)}/${b.maxHp})`, 1000);
       if(b.hp <= 0){
         b.intact = false;
+        if(russia.sharedBridgeTarget === b) russia.sharedBridgeTarget = null;
         addMessage('Bridge destroyed! Napoleon must rebuild!', 3000);
       }
       break;
@@ -1180,8 +1184,27 @@ if(nearF && nearD < engageRange){
     }
   }
 } else if(controlled && controlled.alive){
-  // Follow controlled soldier — check shared farm target first
-  if(russia.sharedFarmTarget && russia.sharedFarmTarget.alive && !russia.sharedFarmTarget.burning){
+  // Follow controlled soldier — shared bridge target takes top priority, then farm
+  if(russia.sharedBridgeTarget && russia.sharedBridgeTarget.intact){
+    const bt = russia.sharedBridgeTarget;
+    const bdx = bt.x - s.x;
+    const bridgeDeckY = GROUND_Y + 80;
+    const bdy = bridgeDeckY - s.y;
+    const bd = Math.hypot(bdx, bdy) || 1;
+    if(Math.abs(bdx) > 65 || Math.abs(s.y - bridgeDeckY) > 75){
+      s.x += (bdx/bd) * s.speed * 1.1 * (dt/1000);
+      s.y += (bdy/bd) * s.speed * 0.55 * (dt/1000);
+      s.facing = bdx > 0 ? 1 : -1;
+    } else if(s.atkCd <= 0){
+      s.atkCd = s.atkCdMax;
+      s.atkTimer = 250;
+      bt.hp -= 10;
+      if(bt.hp <= 0){
+        bt.intact = false;
+        if(russia.sharedBridgeTarget === bt) russia.sharedBridgeTarget = null;
+      }
+    }
+  } else if(russia.sharedFarmTarget && russia.sharedFarmTarget.alive && !russia.sharedFarmTarget.burning){
     const ft = russia.sharedFarmTarget;
     const fdx = ft.x - s.x, fdy = ft.y - s.y;
     const fd = Math.hypot(fdx, fdy) || 1;
@@ -1872,9 +1895,9 @@ if(sx < -100 || sx > W+100) continue;
 const bw = bridge.width + 14; // total span
 const bLeft = sx - bw/2;
 const bRight = sx + bw/2;
-// Road deck flush with road surface; truss rises just above ground line
-const deckY = GROUND_Y + 32;
-const trussTopY = GROUND_Y + 4;
+// Road deck sits at bottom of the travel lane; truss rises above it
+const deckY = GROUND_Y + 80;
+const trussTopY = GROUND_Y + 52;
 const deckH = 16;
 
 if(!bridge.intact){
