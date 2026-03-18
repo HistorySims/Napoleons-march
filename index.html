@@ -207,6 +207,8 @@ let effects = [];
 let particles = [];
 let messages = [];
 let ghosts = [];
+let snowflakes = [];
+let foodIndicators = []; // {text, color, life, maxLife, floatY}
 
 // -- INPUT --
 window.addEventListener('keydown', e => { keys[e.code]=true; });
@@ -359,6 +361,8 @@ speed: napoleon.speed + (Math.random()-0.5)*8,
 walkTimer: Math.random()*1000,
 facing: 1,
 frozen: 0,
+frozenBody: false,
+exclamTimer: 0,
 diseased: false,
 sickness: 0,        // 0-1 green disease progression
 flash: 0,
@@ -420,6 +424,9 @@ napoleon.food = 800;
 napoleon.x = 200;
 napoleon.retreating = false;
 napoleon.atMoscow = false;
+napoleon.stopped = false;
+napoleon.buildingBridge = false;
+napoleon.bridgeBuildTime = 0;
 napoleon.workerIds = [];
 napoleon.buildBridgeX = 0;
 // Supply wagons: 3 carts following the column
@@ -576,6 +583,7 @@ retreatTime += dt;
 // Temperature plummets as retreat begins
 const retreatProgress = retreatTime / 120000;
 temperature = 0 - retreatProgress * 35;
+spawnAndUpdateSnow(dt);
 
 // Napoleon himself walks west
 napoleon.x -= napoleon.speed * (dt/1000);
@@ -621,6 +629,9 @@ effects = [];
 particles = [];
 messages = [];
 ghosts = [];
+snowflakes = [];
+foodIndicators = [];
+napoleon._lastFood = 800;
 addMessage('June 1812: Napoleon crosses into Russia with 100,000 men.', 4000);
 addMessage('Use + to add soldiers, then Send into Battle to deploy them.', 5000);
 }
@@ -664,6 +675,23 @@ for(let i=ghosts.length-1; i>=0; i--){
   if(g.life <= 0) ghosts.splice(i,1);
 }
 
+// Food gain indicator — detect when food increases during playing/retreat
+if(phase==='playing' || phase==='retreat'){
+  const foodDelta = napoleon.food - (napoleon._lastFood || napoleon.food);
+  if(foodDelta > 2){
+    foodIndicators.push({text:'+', color:'#44ee66', life:1100, maxLife:1100, floatY:0});
+  }
+}
+napoleon._lastFood = napoleon.food;
+
+// Tick food indicators
+for(let i=foodIndicators.length-1; i>=0; i--){
+  const ind = foodIndicators[i];
+  ind.life -= dt;
+  ind.floatY = (1 - ind.life / ind.maxLife) * 20;
+  if(ind.life <= 0) foodIndicators.splice(i, 1);
+}
+
 syncMobilePanel();
 }
 
@@ -696,15 +724,40 @@ addMessage(`Napoleon reaches Moscow with ${alive} soldiers!`, 5000);
 }
 }
 
+function spawnAndUpdateSnow(dt){
+const retreatProgress = Math.min(1, retreatTime / 120000);
+// Spawn snowflakes — rate ramps up with retreat progress
+const spawnRate = retreatProgress * 0.22 * dt;
+for(let i=0; i < spawnRate + (Math.random() < (spawnRate % 1) ? 1 : 0); i++){
+  snowflakes.push({
+    x: Math.random() * W,
+    y: -6,
+    vx: (Math.random()-0.5) * 18,
+    vy: 45 + Math.random() * 55,
+    r: 1.2 + Math.random() * 2.2,
+    wobble: Math.random() * Math.PI * 2,
+  });
+}
+// Update flakes
+for(let i=snowflakes.length-1; i>=0; i--){
+  const fl = snowflakes[i];
+  fl.wobble += dt * 0.003;
+  fl.x += (fl.vx + Math.sin(fl.wobble) * 8) * (dt/1000);
+  fl.y += fl.vy * (dt/1000);
+  if(fl.y > H + 8 || fl.x < -10 || fl.x > W + 10) snowflakes.splice(i, 1);
+}
+}
+
 function updateRetreat(dt){
 retreatTime += dt;
 // Temperature plummets during retreat: from ~0 down to -30
 const retreatProgress = retreatTime / 120000; // ~2min full retreat
 temperature = 0 - retreatProgress * 35;
+spawnAndUpdateSnow(dt);
 
 // Napoleon marches back (leftward)
 if(!napoleon.stopped){
-napoleon.x -= napoleon.speed * (dt/1000);
+napoleon.x = Math.max(0, napoleon.x - napoleon.speed * (dt/1000));
 // French soldiers follow
 for(const s of napoleon.soldiers){
 if(!s.alive || s.dying) continue;
@@ -874,14 +927,7 @@ wag.wobble += dt * 0.003;
 for(const s of napoleon.soldiers){
 if(!s.alive || s.dying) continue;
 s.walkTimer += dt;
-napoleon.food -= dt * 0.000025; // ~4× faster: each of 100 soldiers consumes more
-
-// Knockback decay
-if(s.knockTimer > 0){
-  s.x += s.knockVX * (dt/1000);
-  s.knockTimer = Math.max(0, s.knockTimer - dt);
-  if(s.knockTimer <= 0) s.knockVX = 0;
-}
+napoleon.food = Math.max(0, napoleon.food - dt * 0.000025);
 
 // Disease progression for already-diseased soldiers (~11s visible green walk before death)
 if(s.diseased && !s.dying){
@@ -899,13 +945,13 @@ if(s.role === 'vanguard'){
   }
   const rawTargetX = napoleon.x + 60 + s.offsetY * 0.3;
   const targetX = Math.min(rawTargetX, blockX - 32);
-  if(s.x < blockX - 32){
-    s.x += (targetX - s.x) * 0.012 + napoleon.speed * (dt/1000) * 0.95;
-  } else {
-    s.x = blockX - 32; // hold at bridge edge
-  }
+  // Approach target gradually; slow to a stop at bridge edge without hard-snapping
+  s.x += (targetX - s.x) * 0.012 + Math.min(napoleon.speed * (dt/1000) * 0.95, Math.max(0, blockX - 32 - s.x));
   s.facing = 1;
 } else if(s.role === 'raider'){
+  // Decay exclamation timer
+  if(s.exclamTimer > 0) s.exclamTimer = Math.max(0, s.exclamTimer - dt);
+
   // Raiders race ahead to loot farms, then carry food back slowly (laden)
   let nearFarm = null, nearFarmDist = Infinity;
   for(const farm of farms){
@@ -917,11 +963,12 @@ if(s.role === 'vanguard'){
   }
   if(nearFarm && !s.raidReturning){
     s.raidTarget = nearFarm;
+    s.burntTarget = null;
     const dx = nearFarm.x - s.x;
     const dy = nearFarm.y - s.y;
     const dist = Math.hypot(dx, dy) || 1;
     if(dist > 22){
-      s.x += (dx/dist) * s.speed * 1.55 * (dt/1000); // fast outbound
+      s.x += (dx/dist) * s.speed * 1.55 * (dt/1000);
       s.y += (dy/dist) * s.speed * 1.55 * (dt/1000);
       s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
       s.facing = dx > 0 ? 1 : -1;
@@ -937,18 +984,58 @@ if(s.role === 'vanguard'){
         s.carrying = s.carryFood > 0;
       }
     }
+  } else if(!s.raidReturning && !s.burntTarget){
+    // No live farm — look for a burnt farm to investigate (within 600px ahead)
+    let nearBurnt = null, nearBurntDist = Infinity;
+    for(const farm of farms){
+      if(farm.alive) continue; // skip live farms
+      const d = Math.hypot(s.x - farm.x, s.y - farm.y);
+      if(d < 600 && farm.x > napoleon.x - 50 && d < nearBurntDist){
+        nearBurnt = farm; nearBurntDist = d;
+      }
+    }
+    if(nearBurnt){
+      s.burntTarget = nearBurnt;
+    } else {
+      // Nothing to investigate — just follow army
+      const targetX = napoleon.x - 40;
+      const targetY = GROUND_Y + 35;
+      s.x += (targetX - s.x) * 0.008 + napoleon.speed * (dt/1000) * 0.88;
+      s.y += (targetY - s.y) * 0.025;
+      s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
+      s.facing = 1;
+    }
+  } else if(s.burntTarget && !s.raidReturning){
+    // Move toward burnt farm
+    const dx = s.burntTarget.x - s.x;
+    const dy = s.burntTarget.y - s.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    if(dist > 26){
+      s.x += (dx/dist) * s.speed * 1.3 * (dt/1000);
+      s.y += (dy/dist) * s.speed * 1.3 * (dt/1000);
+      s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
+      s.facing = dx > 0 ? 1 : -1;
+    } else {
+      // Arrived at burnt farm — show red ! and turn back
+      s.exclamTimer = 1800;
+      s.burntTarget = null;
+      s.raidReturning = true;
+      foodIndicators.push({text:'−', color:'#ee3333', life:1100, maxLife:1100, floatY:0});
+    }
   } else {
     // Return to army with food — laden, so noticeably slower
     const targetX = napoleon.x - 60;
-    const targetY = GROUND_Y + 35; // drift back to road level
+    const targetY = GROUND_Y + 35;
     s.x += (targetX - s.x) * 0.008 + napoleon.speed * (dt/1000) * 0.62;
     s.y += (targetY - s.y) * 0.025;
     s.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, s.y));
     s.facing = s.x > napoleon.x ? -1 : 1;
-    if(Math.abs(s.x - napoleon.x) < 180 && s.carrying){
-      napoleon.food = Math.min(napoleon.maxFood, napoleon.food + s.carryFood);
-      s.carryFood = 0;
-      s.carrying = false;
+    if(Math.abs(s.x - napoleon.x) < 180){
+      if(s.carrying){
+        napoleon.food = Math.min(napoleon.maxFood, napoleon.food + s.carryFood);
+        s.carryFood = 0;
+        s.carrying = false;
+      }
       s.raidReturning = false;
     }
   }
@@ -1067,7 +1154,7 @@ if(len>0){ dx/=len; dy/=len; }
 controlled.x += dx * controlled.speed * (dt/1000);
 controlled.y += dy * controlled.speed * 0.6 * (dt/1000);
 controlled.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, controlled.y));
-controlled.x = Math.max(camera.x+20, Math.min(MAP_WIDTH-20, controlled.x));
+controlled.x = Math.max(20, Math.min(MAP_WIDTH-20, controlled.x));
 if(dx!==0) controlled.facing = dx>0?1:-1;
 controlled.walkTimer += dt * (Math.abs(dx)+Math.abs(dy) > 0 ? 1 : 0);
 
@@ -1139,13 +1226,11 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
 }
 
 // AI soldiers: follow player first; join combat only when player is fighting
-// Check if controlled player is currently fighting (near a French soldier)
-const controlled2 = russia.controlledIdx >= 0 ? russia.deployed[russia.controlledIdx] : null;
 let playerNearFrench = false;
-if(controlled2 && controlled2.alive){
+if(controlled && controlled.alive && !controlled.dying){
   for(const f of napoleon.soldiers){
     if(!f.alive||f.dying) continue;
-    if(Math.hypot(f.x-controlled2.x, f.y-controlled2.y) < 180){ playerNearFrench = true; break; }
+    if(Math.hypot(f.x-controlled.x, f.y-controlled.y) < 180){ playerNearFrench = true; break; }
   }
 }
 
@@ -1183,7 +1268,7 @@ if(nearF && nearD < engageRange){
       nearF.dying = true; nearF.dyingMs = 800; nearF.deathType = 'combat';
     }
   }
-} else if(controlled && controlled.alive){
+} else if(controlled && controlled.alive && !controlled.dying){
   // Follow controlled soldier — shared bridge target takes top priority, then farm
   if(russia.sharedBridgeTarget && russia.sharedBridgeTarget.intact){
     const bt = russia.sharedBridgeTarget;
@@ -1852,6 +1937,39 @@ ctx.moveTo(0, GROUND_Y+55);
 ctx.lineTo(W, GROUND_Y+55);
 ctx.stroke();
 ctx.setLineDash([]);
+
+// Progressive snow accumulation on ground during retreat
+const retreatProgress = (phase === 'retreat' || phase === 'burned') ? Math.min(1, retreatTime / 120000) : 0;
+if(retreatProgress > 0){
+  // Base snow blanket, builds up over time
+  const snowDepth = retreatProgress;
+  ctx.fillStyle = `rgba(218,228,240,${snowDepth * 0.72})`;
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+  // Lighter snow on the road surface (packed, slightly less coverage)
+  ctx.fillStyle = `rgba(225,233,245,${snowDepth * 0.45})`;
+  ctx.fillRect(0, GROUND_Y + 30, W, 50);
+  // Lumpy snow drifts along the ground edge
+  if(snowDepth > 0.1){
+    ctx.fillStyle = `rgba(232,240,250,${(snowDepth - 0.1) * 0.9})`;
+    for(let lx = -30; lx < W + 40; lx += 48){
+      const lumpH = 4 + Math.sin(lx * 0.08) * 3 + snowDepth * 8;
+      ctx.beginPath();
+      ctx.ellipse(lx, GROUND_Y + 2, 26, lumpH, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+    // Snow on road edges
+    ctx.fillStyle = `rgba(235,242,252,${(snowDepth - 0.1) * 0.7})`;
+    for(let lx = -20; lx < W + 30; lx += 38){
+      const lh = 3 + Math.cos(lx * 0.11) * 2 + snowDepth * 5;
+      ctx.beginPath();
+      ctx.ellipse(lx, GROUND_Y + 30, 20, lh, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(lx + 18, GROUND_Y + 80, 18, lh * 0.8, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+}
 }
 
 function drawRivers(){
@@ -1992,13 +2110,28 @@ const sx = farm.x - camera.x;
 const fy = farm.y || GROUND_Y + 16; // y anchor (base of building)
 if(sx < -90 || sx > W+90) continue;
 
-// Charred remains
+// Charred remains with lingering smoke
 if(!farm.alive && !farm.burning){
   ctx.fillStyle='#1a1414';
   ctx.fillRect(sx-14, fy-4, 28, 8);
   // Ash scatter
   ctx.fillStyle='rgba(60,50,40,0.4)';
   for(let a=0;a<5;a++) ctx.fillRect(sx-20+a*9, fy, 6, 3);
+  // Drifting smoke wisps
+  ctx.save();
+  for(let k=0; k<3; k++){
+    const t = (gameTime * 0.00055 + k * 0.38) % 1;
+    const px = sx + Math.sin(gameTime * 0.001 + k * 2.3) * 5 + (k-1) * 9;
+    const py = fy - 6 - t * 44;
+    const fade = t < 0.18 ? t/0.18 : t > 0.65 ? (1-t)/0.35 : 1;
+    ctx.globalAlpha = fade * 0.38;
+    const g = 88 + Math.round(t * 38);
+    ctx.fillStyle = `rgb(${g},${g-4},${g-8})`;
+    ctx.beginPath();
+    ctx.arc(px, py, 3 + t * 8, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
   continue;
 }
 
@@ -2135,7 +2268,7 @@ if(farm.farmHp < 3 && !farm.burning){
 }
 
 // Food bar (above building)
-if(farm.food > 0 && farm.alive){
+if(farm.food > 0 && farm.alive && !farm.burning){
   const pct = farm.food / farm.maxFood;
   ctx.fillStyle='rgba(0,0,0,0.45)';
   ctx.fillRect(sx-16, fy-68, 32, 5);
@@ -2522,6 +2655,19 @@ ctx.fillRect(-7,-4-loadH,14,3);
 ctx.restore();
 }
 
+// Red exclamation for raiders who found a burnt house
+if(s.exclamTimer > 0){
+  const pulse = Math.sin(gameTime * 0.025) * 0.15 + 0.85;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, s.exclamTimer / 300) * pulse;
+  ctx.fillStyle = '#ee2020';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('!', 0, -34);
+  ctx.restore();
+}
+
 ctx.filter='none';
 ctx.restore();
 }
@@ -2795,36 +2941,60 @@ function drawHUD(){
 // Temperature gauge (top right)
 ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(W-190,8,182,50,8); ctx.fill();
-ctx.fillStyle = temperature > 5 ? '#a0c080' : temperature > -5 ? '#c8c040' : temperature > -15 ? '#60a0e0' : '#4060ff';
+const shadow = () => { ctx.shadowColor='rgba(0,0,0,0.85)'; ctx.shadowBlur=4; };
+const noShadow = () => { ctx.shadowColor='transparent'; ctx.shadowBlur=0; };
+
+ctx.fillStyle = temperature > 5 ? '#b8e890' : temperature > -5 ? '#f0e050' : temperature > -15 ? '#80c8ff' : '#88aaff';
 ctx.font='bold 22px Cinzel, serif';
 ctx.textAlign='right';
+shadow();
 ctx.fillText(`${Math.round(temperature)}°C`, W-16, 36);
-ctx.fillStyle='#aaa'; ctx.font='11px "IM Fell English", serif';
+ctx.fillStyle='#ddeedd'; ctx.font='11px "IM Fell English", serif';
 ctx.fillText(getSeasonLabel(), W-16, 52);
+noShadow();
 
 // French army stats (top center)
 const aliveF = napoleon.soldiers.filter(s=>s.alive&&!s.dying).length;
 ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(W/2-150,8,300,50,8); ctx.fill();
-ctx.fillStyle=COL.frenchLight; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='center';
+ctx.fillStyle='#c8d8ff'; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='center';
+shadow();
 ctx.fillText(`Grande Armée: ${aliveF} / 100`, W/2, 28);
+noShadow();
 // Food bar
 const foodPct = Math.max(0, napoleon.food / napoleon.maxFood);
 ctx.fillStyle='#333'; ctx.fillRect(W/2-100,36,200,12);
 ctx.fillStyle = foodPct > 0.3 ? '#c8a830' : '#c84020';
 ctx.fillRect(W/2-100,36,200*foodPct,12);
 ctx.strokeStyle='#555'; ctx.lineWidth=0.5; ctx.strokeRect(W/2-100,36,200,12);
-ctx.fillStyle='#ddd'; ctx.font='9px "IM Fell English", serif';
+ctx.fillStyle='#ffffff'; ctx.font='bold 9px "IM Fell English", serif';
+shadow();
 ctx.fillText(`Food: ${Math.floor(napoleon.food)}`, W/2, 46);
+noShadow();
+
+// Food delta indicators — float and fade right of the bar
+for(const ind of foodIndicators){
+  const alpha = Math.min(1, ind.life / 280);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = ind.color;
+  ctx.font = 'bold 13px Cinzel, serif';
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 4;
+  ctx.fillText(ind.text, W/2 + 108, 44 - ind.floatY);
+  ctx.restore();
+}
 
 // Russian forces (top left)
 const aliveR = russia.deployed.filter(s=>s.alive&&!s.dying).length;
 ctx.fillStyle='rgba(0,0,0,0.6)';
 ctx.beginPath(); ctx.roundRect(8,8,180,50,8); ctx.fill();
-ctx.fillStyle=COL.russianLight; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='left';
+ctx.fillStyle='#90eea0'; ctx.font='bold 13px Cinzel, serif'; ctx.textAlign='left';
+shadow();
 ctx.fillText(`Russian Army`, 16, 28);
-ctx.fillStyle='#aaa'; ctx.font='11px "IM Fell English", serif';
+ctx.fillStyle='#ccffcc'; ctx.font='11px "IM Fell English", serif';
 ctx.fillText(`Deployed: ${aliveR}  |  Reserve: ${russia.bank}`, 16, 46);
+noShadow();
 
 // Deploy box (bottom left)
 drawDeployBox();
@@ -2958,13 +3128,16 @@ let my = H/2 - 50;
 for(const msg of messages){
 const alpha = Math.min(1, msg.life / 500);
 ctx.save(); ctx.globalAlpha=alpha;
-ctx.fillStyle='rgba(0,0,0,0.7)';
-const tw = ctx.measureText(msg.text).width || 300;
-ctx.beginPath(); ctx.roundRect(W/2-tw/2-20, my-8, tw+40, 26, 6); ctx.fill();
-ctx.fillStyle='#ffeedd';
 ctx.font='13px "IM Fell English", serif';
 ctx.textAlign='center';
+const tw = Math.max(200, ctx.measureText(msg.text).width);
+ctx.fillStyle='rgba(0,0,0,0.72)';
+ctx.beginPath(); ctx.roundRect(W/2-tw/2-20, my-8, tw+40, 26, 6); ctx.fill();
+ctx.fillStyle='#fff8ee';
+ctx.shadowColor='rgba(0,0,0,0.9)';
+ctx.shadowBlur=5;
 ctx.fillText(msg.text, W/2, my+8);
+ctx.shadowColor='transparent'; ctx.shadowBlur=0;
 ctx.restore();
 my += 32;
 }
@@ -3177,6 +3350,7 @@ else drawRussianSoldier(s);
 drawNapoleon();
 drawParticles();
 drawGhosts();
+drawSnow();
 drawEndScreen();
 return;
 }
@@ -3202,6 +3376,7 @@ else drawRussianSoldier(s);
 
 drawParticles();
 drawGhosts();
+drawSnow();
 drawBridgeBuildIndicator();
 drawHUD();
 }
@@ -3231,6 +3406,20 @@ for(const g of ghosts){
   ctx.font = `${Math.round(22*scale)}px serif`;
   ctx.fillText('👻', sx, g.y);
   ctx.restore();
+}
+ctx.restore();
+}
+
+function drawSnow(){
+if(snowflakes.length === 0) return;
+ctx.save();
+for(const fl of snowflakes){
+  const alpha = Math.min(1, (H - fl.y + 50) / 80); // fade in from top, fade near ground
+  ctx.globalAlpha = Math.max(0, alpha) * 0.82;
+  ctx.fillStyle = '#e8eef8';
+  ctx.beginPath();
+  ctx.arc(fl.x, fl.y, fl.r, 0, Math.PI*2);
+  ctx.fill();
 }
 ctx.restore();
 }
