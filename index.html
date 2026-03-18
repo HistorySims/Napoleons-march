@@ -375,6 +375,8 @@ raidReturning: false,
 carrying: false,    // raider carrying food
 carryFood: 0,
 hammerAngle: 0,     // bridge worker hammer animation
+atkCd: Math.random()*700,  // stagger initial attacks so soldiers don't all fire at once
+atkCdMax: 700,
 id: Math.random(),
 };
 }
@@ -1298,10 +1300,11 @@ updateDying(dt);
 }
 
 function updateCombat(dt){
-// French soldiers fight back against nearby Russians
+// French soldiers fight back against nearby Russians — same stats as Russian soldiers
 for(const f of napoleon.soldiers){
 if(!f.alive||f.dying) continue;
 f.walkTimer += dt;
+f.atkCd = Math.max(0, f.atkCd - dt);
 
 let nearR = null, nearD = Infinity;
 for(const r of russia.deployed){
@@ -1315,14 +1318,13 @@ if(napoleon.retreating){
   if(nearR && nearD < 100){
     // Turn to fight
     f.facing = nearR.x > f.x ? 1 : -1;
-    if(nearD < 35){
-      if(Math.random() < 0.0018 * dt){
-        nearR.hp -= 34 + Math.floor(Math.random()*4);
-        nearR.flash = 200;
-        nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
-        nearR.knockTimer = 180;
-        if(nearR.hp <= 0 && !nearR.dying){ nearR.dying = true; nearR.dyingMs = 800; }
-      }
+    if(nearD < 36 && f.atkCd <= 0){
+      f.atkCd = f.atkCdMax;
+      nearR.hp -= 34 + Math.floor(Math.random()*4);
+      nearR.flash = 200;
+      nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
+      nearR.knockTimer = 180;
+      if(nearR.hp <= 0 && !nearR.dying){ nearR.dying = true; nearR.dyingMs = 800; }
     }
   } else {
     // March west
@@ -1333,15 +1335,14 @@ if(napoleon.retreating){
     f.x += (targetX - f.x) * 0.003;
   }
 } else {
-  if(nearR && nearD < 35){
-    // French attacks Russian — 3 hits to kill
-    if(Math.random() < 0.0018 * dt){
-      nearR.hp -= 34 + Math.floor(Math.random()*4);
-      nearR.flash = 200;
-      nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
-      nearR.knockTimer = 180;
-      if(nearR.hp <= 0 && !nearR.dying){ nearR.dying = true; nearR.dyingMs = 800; }
-    }
+  if(nearR && nearD < 36 && f.atkCd <= 0){
+    // French attacks Russian — identical to Russian attack: 34 dmg, 700ms cooldown, 3 hits to kill
+    f.atkCd = f.atkCdMax;
+    nearR.hp -= 34 + Math.floor(Math.random()*4);
+    nearR.flash = 200;
+    nearR.knockVX = (nearR.x > f.x ? 1 : -1) * 80;
+    nearR.knockTimer = 180;
+    if(nearR.hp <= 0 && !nearR.dying){ nearR.dying = true; nearR.dyingMs = 800; }
   }
 }
 
