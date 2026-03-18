@@ -1066,7 +1066,7 @@ if(marchProgress > 0.25){
   const distFactor = Math.min(1, (marchProgress - 0.25) / 0.75); // 0→1 over remaining march
   const starveFactor = Math.max(0, 1 - foodRatio * 2);            // 0 at 50%+ food, 1 at 0%
   const sickRate = distFactor * 0.35 + starveFactor * 0.65;
-  const infChance = sickRate * 0.000055 * dt; // ~54 of 90 soldiers infected before Moscow
+  const infChance = sickRate * 0.000024 * dt; // ~53 die, ~40 reach Moscow
   for(const s of napoleon.soldiers){
     if(s.alive && !s.dying && !s.diseased && Math.random() < infChance){
       s.diseased = true;
@@ -1269,27 +1269,8 @@ if(nearF && nearD < engageRange){
     }
   }
 } else if(controlled && controlled.alive && !controlled.dying){
-  // Follow controlled soldier — shared bridge target takes top priority, then farm
-  if(russia.sharedBridgeTarget && russia.sharedBridgeTarget.intact){
-    const bt = russia.sharedBridgeTarget;
-    const bdx = bt.x - s.x;
-    const bridgeDeckY = GROUND_Y + 80;
-    const bdy = bridgeDeckY - s.y;
-    const bd = Math.hypot(bdx, bdy) || 1;
-    if(Math.abs(bdx) > 65 || Math.abs(s.y - bridgeDeckY) > 75){
-      s.x += (bdx/bd) * s.speed * 1.1 * (dt/1000);
-      s.y += (bdy/bd) * s.speed * 0.55 * (dt/1000);
-      s.facing = bdx > 0 ? 1 : -1;
-    } else if(s.atkCd <= 0){
-      s.atkCd = s.atkCdMax;
-      s.atkTimer = 250;
-      bt.hp -= 10;
-      if(bt.hp <= 0){
-        bt.intact = false;
-        if(russia.sharedBridgeTarget === bt) russia.sharedBridgeTarget = null;
-      }
-    }
-  } else if(russia.sharedFarmTarget && russia.sharedFarmTarget.alive && !russia.sharedFarmTarget.burning){
+  // Follow controlled soldier — shared farm target, then follow player
+  if(russia.sharedFarmTarget && russia.sharedFarmTarget.alive && !russia.sharedFarmTarget.burning){
     const ft = russia.sharedFarmTarget;
     const fdx = ft.x - s.x, fdy = ft.y - s.y;
     const fd = Math.hypot(fdx, fdy) || 1;
