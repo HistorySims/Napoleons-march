@@ -148,6 +148,45 @@ sharedBridgeTarget: null,
 // Moscow city state
 let moscow = { hp: 300, maxHp: 300, burned: false };
 
+// -- CAMPAIGN: supplies, calendar and winter --
+// The Grande Armée carried only part of what it needed and lived off Russian farms.
+const START_FOOD = 400;              // stores carried across the Niemen (of 800)
+const FOOD_PER_SOLDIER = 0.00005;    // food eaten per soldier per ms, marching or waiting
+const REGROW_MS = 60000;             // a looted farm's harvest comes back; a burned one never does
+const BRIDGE_DAYS_PER_SEC = 0.8;     // calendar days lost per second spent rebuilding a bridge
+const RETREAT_DAYS_PER_SEC = 0.17;   // pace of the calendar on the road home
+const RETREAT_SPEED = 36;
+const MOSCOW_DAY = 82, RETREAT_DAY = 117; // reach Moscow 14 Sept; leave 19 Oct after five weeks waiting
+const COLD_K = 0.0001;               // chance per second of freezing, per degree below -4°C
+let daysLost = 0;                    // days the Russians cost him at broken bridges
+let hints = new Set();               // one-time dispatches already shown
+
+// Days since 24 June 1812
+function campaignDay(){
+  if(napoleon.retreating) return RETREAT_DAY + daysLost + retreatTime / 1000 * RETREAT_DAYS_PER_SEC;
+  return Math.min(1, napoleon.x / MOSCOW_X) * MOSCOW_DAY + daysLost;
+}
+const TEMP_BY_DAY = [[0,17],[40,21],[82,10],[117,2],[135,-8],[150,-15],[160,-22],[168,-30],[180,-35]];
+function tempForDay(d){
+  const k = TEMP_BY_DAY;
+  if(d <= k[0][0]) return k[0][1];
+  for(let i = 1; i < k.length; i++) if(d <= k[i][0]) return k[i-1][1] + (k[i][1] - k[i-1][1]) * (d - k[i-1][0]) / (k[i][0] - k[i-1][0]);
+  return k[k.length - 1][1];
+}
+const MONTHS = [['June',30,1812],['July',31,1812],['August',31,1812],['September',30,1812],['October',31,1812],['November',30,1812],['December',31,1812],['January',31,1813],['February',28,1813]];
+function dateLabel(d){
+  let day = 24 + Math.floor(d), m = 0;
+  while(m < MONTHS.length - 1 && day > MONTHS[m][1]){ day -= MONTHS[m][1]; m++; }
+  return `${day} ${MONTHS[m][0]} ${MONTHS[m][2]}`;
+}
+// 0 when the retreat begins in October, 1 by mid-December (drives snow and the winter look)
+function winterProgress(){ return napoleon.retreating ? Math.max(0, Math.min(1, (campaignDay() - RETREAT_DAY) / 55)) : 0; }
+const HUNGER = ['Well fed', 'Rationed', 'Hungry', 'Starving'];
+function hungerLevel(){ const r = napoleon.food / napoleon.maxFood; return napoleon.food <= 0 ? 3 : r < 0.2 ? 2 : r < 0.45 ? 1 : 0; }
+function farmBurnable(f){ return !f.burnt && !f.burning; }
+// Explain the why the first time something happens
+function hint(key, text, ms){ if(hints.has(key)) return; hints.add(key); addMessage(text, ms || 4500); }
+
 // Map features
 let farms = [];
 let bridges = [];
@@ -412,7 +451,7 @@ const x = 120 + Math.random()*150;
 const s = createFrenchSoldier(x, undefined, 'raider');
 napoleon.soldiers.push(s);
 }
-napoleon.food = 800;
+napoleon.food = START_FOOD;
 napoleon.x = 200;
 napoleon.retreating = false;
 napoleon.atMoscow = false;
@@ -449,10 +488,11 @@ if(phase==='burned'){
 // Continue to retreat phase
 phase = 'retreat';
 napoleon.retreating = true;
-napoleon.speed = 28;
+napoleon.speed = RETREAT_SPEED;
 retreatTime = 0;
 for(const s of napoleon.soldiers) s.facing = -1;
-addMessage('Napoleon retreats! The winter will do the rest...', 4000);
+addMessage('He must retreat down the road he came, with winter coming.', 4500);
+addMessage('Farms you spared will feed him. Broken bridges will hold him in the cold.', 5500);
 return;
 }
 if(phase==='napoleon_wins' || phase==='gameover_win' || phase==='gameover_lose'){
@@ -521,7 +561,7 @@ moscow.burned = true;
 fxCityBurst();
 // Napoleon gets NO food from Moscow — immediately begin retreat
 napoleon.retreating = true;
-napoleon.speed = 28;
+napoleon.speed = RETREAT_SPEED;
 napoleon.stopped = false;
 retreatTime = 0;
 // Flip all French soldiers to face west (left)
@@ -538,12 +578,14 @@ if(russia.controlledIdx >= 0 && russia.deployed[russia.controlledIdx])
 russia.deployed[russia.controlledIdx].controlled = false;
 russia.controlledIdx = -1;
 
-// Spawn soldiers on the right side of the screen (just inside view)
-const spawnBaseX = camera.x + W - 80;
+// Spawn soldiers ahead of the Grande Armée: the east edge on the advance, the west edge in the retreat
+const ahead = napoleon.retreating ? -1 : 1;
+const spawnBaseX = ahead > 0 ? camera.x + W - 80 : camera.x + 80;
 for(let i=0; i<russia.pendingSoldiers; i++){
 const sy = LANE_TOP + 20 + Math.random() * (LANE_BOT - LANE_TOP - 40);
-const sx = spawnBaseX - i * 18 + (Math.random()-0.5)*10;
-const s = createRussianSoldier(Math.max(camera.x+20, sx), sy);
+const sx = spawnBaseX - ahead * i * 18 + (Math.random()-0.5)*10;
+const s = createRussianSoldier(Math.max(camera.x+20, Math.min(camera.x + W - 20, sx)), sy);
+s.facing = -ahead;
 if(i === 0){
 s.controlled = true;
 russia.controlledIdx = russia.deployed.length;
@@ -555,14 +597,12 @@ const count = russia.pendingSoldiers;
 russia.pendingSoldiers = 0;
 russia.inBattle = true;
 addMessage(`${count} soldier${count>1?'s':''} deployed! WASD to move, Space to attack.`, 2500);
-addMessage('Camera follows you. Raid farms, attack soldiers!', 2000);
+hint('deploy', 'Get ahead of his column: burn the farms, break the bridges.', 4000);
 }
 
 function updateBurned(dt){
 retreatTime += dt;
-// Temperature plummets as retreat begins
-const retreatProgress = retreatTime / 120000;
-temperature = 0 - retreatProgress * 35;
+temperature = tempForDay(campaignDay());
 spawnAndUpdateSnow(dt);
 
 // Napoleon himself walks west
@@ -600,6 +640,7 @@ russia.pendingSoldiers = 0;
 russia.inBattle = false;
 russia.sharedFarmTarget = null;
 russia.sharedBridgeTarget = null;
+russia.bridgesCut = 0;
 moscow.hp = moscow.maxHp;
 moscow.burned = false;
 temperature = 15;
@@ -614,9 +655,13 @@ foodIndicators = [];
 fx = [];
 shakeAmt = 0;
 campaignLog = { adv: [], ret: [] };
-napoleon._lastFood = 800;
+daysLost = 0;
+hints = new Set();
+napoleon._lastFood = START_FOOD;
+temperature = tempForDay(0);
 addMessage('June 1812: Napoleon crosses into Russia with 100,000 men.', 4000);
-addMessage('Use + to add soldiers, then Send into Battle to deploy them.', 5000);
+addMessage('He carries little food. His army must live off Russian farms.', 5000);
+addMessage('Use + to add soldiers, then Send into Battle to deploy them.', 6000);
 }
 
 function resetGame(){
@@ -626,6 +671,8 @@ phase = 'title';
 // -- MESSAGES --
 function addMessage(text, duration){
 messages.push({ text, life: duration, maxLife: duration });
+// Keep dispatches readable: once three are showing, older ones give way quickly
+for(let i = 0; i < messages.length - 3; i++) messages[i].life = Math.min(messages[i].life, 400);
 }
 
 // -- UPDATE --
@@ -657,7 +704,7 @@ for(let i=ghosts.length-1; i>=0; i--){
 if(phase==='playing' || phase==='retreat'){
   const foodDelta = napoleon.food - (napoleon._lastFood || napoleon.food);
   if(foodDelta > 2){
-    foodIndicators.push({text:'+', color:'#44ee66', life:1100, maxLife:1100, floatY:0});
+    foodIndicators.push({text: foodDelta >= 8 ? `+${Math.round(foodDelta)}` : '+', color:'#44ee66', life:1100, maxLife:1100, floatY:0});
   }
 }
 napoleon._lastFood = napoleon.food;
@@ -674,10 +721,8 @@ syncMobilePanel();
 }
 
 function updatePlaying(dt){
-// Temperature drops as Napoleon approaches Moscow
-const progress = napoleon.x / MOSCOW_X;
-// June (15°C) → September at Moscow (~5°C approach), sharper drop later
-temperature = 15 - progress * 12;
+// The calendar runs with the march; days lost at rivers push it toward winter
+temperature = tempForDay(campaignDay());
 
 updateNapoleonAdvance(dt);
 updateRussianForces(dt);
@@ -704,9 +749,7 @@ addMessage(`Napoleon reaches Moscow with ${alive} soldiers!`, 5000);
 
 function updateRetreat(dt){
 retreatTime += dt;
-// Temperature plummets during retreat: from ~0 down to -30
-const retreatProgress = retreatTime / 120000; // ~2min full retreat
-temperature = 0 - retreatProgress * 35;
+temperature = tempForDay(campaignDay());
 spawnAndUpdateSnow(dt);
 
 // Napoleon marches back (leftward)
@@ -718,28 +761,6 @@ if(!s.alive || s.dying) continue;
 const targetX = napoleon.x + (s.x - napoleon.x) * 0.3 + (Math.random()-0.5)*2;
 s.x += (targetX - s.x) * 0.01 - napoleon.speed * (dt/1000) * 0.9;
 s.walkTimer += dt;
-
-  // Disease progression continues into retreat (faster in the cold)
-  if(s.diseased && !s.dying){
-    s.sickness = Math.min(1, s.sickness + dt * 0.00015);
-    if(s.sickness >= 1){ s.dying = true; s.dyingMs = 2000; s.deathType = 'disease'; }
-  }
-  // Winter attrition
-  if(temperature < -5){
-    const freezeChance = Math.abs(temperature + 5) * 0.000008 * dt;
-    if(Math.random() < freezeChance && !s.dying){
-      s.dying = true; s.dyingMs = 1500; s.deathType = 'freeze'; s.frozen = 1;
-    }
-    const diseaseChance = Math.abs(temperature + 5) * 0.000005 * dt;
-    if(Math.random() < diseaseChance && !s.dying){
-      s.diseased = true; s.sickness = Math.max(s.sickness, 0.2);
-    }
-  }
-  // New disease spread during retreat when food low
-  const foodRatioR = napoleon.food / napoleon.maxFood;
-  if(foodRatioR < 0.5 && !s.diseased && Math.random() < (0.5-foodRatioR)*0.000015*dt){
-    s.diseased = true; s.sickness = 0.05;
-  }
 }
 
 // Check rivers  - need bridges
@@ -749,13 +770,15 @@ for(const bridge of bridges){
     napoleon.buildingBridge = true;
     napoleon.bridgeBuildTime = 0;
     napoleon.bridgeBuildMax = 4000;
-    addMessage('Napoleon must rebuild the bridge! Attack now!', 3000);
+    napoleon.bridgeDaysStart = daysLost;
+    addMessage('Bridge out! His army waits in the snow while it is rebuilt — attack now!', 3500);
     break;
   }
 }
 
 } else if(napoleon.buildingBridge) {
 napoleon.bridgeBuildTime += dt;
+daysLost += dt / 1000 * BRIDGE_DAYS_PER_SEC;
 if(napoleon.bridgeBuildTime >= napoleon.bridgeBuildMax){
 napoleon.buildingBridge = false;
 napoleon.stopped = false;
@@ -765,23 +788,12 @@ if(!b.intact && Math.abs(napoleon.x - b.x)<100){
 b.intact = true; b.hp = 50; break;
 }
 }
+addMessage(`Bridge rebuilt — ${Math.round(daysLost - napoleon.bridgeDaysStart)} more days lost to winter.`, 3000);
 }
 }
 
-// Food consumption during retreat
-napoleon.food -= dt * 0.015;
-
-// Starvation kills
-if(napoleon.food <= 0){
-napoleon.food = 0;
-const starveChance = 0.00003 * dt;
-for(const s of napoleon.soldiers){
-if(s.alive && !s.dying && Math.random() < starveChance){
-s.dying = true; s.dyingMs = 1500; s.deathType = 'disease';
-}
-}
-}
-
+forageAlongRoad(dt);
+updateRetreatAttrition(dt);
 updateRussianForces(dt);
 updateCombat(dt);
 updateDying(dt);
@@ -807,6 +819,49 @@ addMessage(`Napoleon escapes with ${aliveF} soldiers of 100,000.`, 5000);
 }
 }
 
+// On the way home the column strips whatever farms are still standing
+function forageAlongRoad(dt){
+for(const farm of farms){
+  if(!farm.alive || farm.food <= 0 || Math.abs(farm.x - napoleon.x) > 420) continue;
+  for(const s of napoleon.soldiers){
+    if(!s.alive || s.dying) continue;
+    if(Math.abs(s.x - farm.x) < 50 && Math.abs(s.y - farm.y) < 70){
+      const take = Math.min(dt * 0.004, farm.food);
+      farm.food -= take;
+      napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
+      if(Math.random() < dt * 0.004) fxGrain(farm, s);
+      if(farm.food <= 0){ farm.alive = false; fxText(farm.x, farm.y - 64, 'stripped', '#e8c060'); }
+      hint('spared', 'A farm you spared is feeding his retreat.', 4000);
+    }
+  }
+}
+}
+
+// Winter: hungry men sicken, starve and freeze, marching or waiting at a river
+function updateRetreatAttrition(dt){
+const alive = napoleon.soldiers.filter(s => s.alive && !s.dying);
+napoleon.food = Math.max(0, napoleon.food - dt * FOOD_PER_SOLDIER * alive.length);
+const hunger = hungerLevel();
+const hungerMult = [1, 1.25, 1.7, 2.3][hunger];
+const starveFactor = Math.max(0, 1 - (napoleon.food / napoleon.maxFood) * 2);
+const freezeChance = Math.max(0, -temperature - 4) * COLD_K * hungerMult * dt / 1000;
+const infectChance = (0.0004 + 0.003 * starveFactor) * dt / 1000;
+const starveChance = hunger === 3 ? 0.003 * dt / 1000 : 0;
+if(hunger >= 2) hint('hungry', 'His army is going hungry. Hunger breeds typhus, and hungry men freeze first.', 5000);
+for(const s of alive){
+  if(s.diseased){
+    s.sickness = Math.min(1, s.sickness + dt * 0.00012);
+    if(s.sickness >= 1){ s.dying = true; s.dyingMs = 2000; s.deathType = 'disease'; continue; }
+  } else if(Math.random() < infectChance){ s.diseased = true; s.sickness = 0.05; }
+  if(Math.random() < freezeChance){
+    s.dying = true; s.dyingMs = 1500; s.deathType = 'freeze'; s.frozen = 1;
+    hint('freeze', 'Winter has come. Men are freezing on the road.', 3500);
+  } else if(Math.random() < starveChance){
+    s.dying = true; s.dyingMs = 1500; s.deathType = 'starve';
+    hint('starve', 'Men are starving in the ranks.', 3000);
+  }
+}
+}
 function updateNapoleonAdvance(dt){
 // Bridge building runs regardless of stopped state
 if(napoleon.buildingBridge){
@@ -826,6 +881,8 @@ for(const s of napoleon.soldiers){
     s.hammerAngle = Math.sin(gameTime * 0.008 + workerSlot) * 1.4;
   }
 }
+daysLost += dt / 1000 * BRIDGE_DAYS_PER_SEC;
+updateArmyUpkeep(dt);
 if(napoleon.bridgeBuildTime >= napoleon.bridgeBuildMax){
   napoleon.buildingBridge = false;
   napoleon.stopped = false;
@@ -838,7 +895,7 @@ if(napoleon.bridgeBuildTime >= napoleon.bridgeBuildMax){
     if(s.role === 'worker'){ s.role = 'column'; s.hammerAngle = 0; }
   }
   napoleon.workerIds = [];
-  addMessage('Bridge rebuilt! The Grande Armée advances.', 2500);
+  addMessage(`Bridge rebuilt. ${Math.round(daysLost - napoleon.bridgeDaysStart)} days lost — and his men ate while they waited.`, 3500);
 }
 return; // don't march while workers are building
 }
@@ -854,6 +911,7 @@ if(!bridge.intact){
   napoleon.bridgeBuildTime = 0;
   napoleon.bridgeBuildMax = 5000;
   napoleon.buildBridgeX = bridge.x;
+  napoleon.bridgeDaysStart = daysLost;
   napoleon.workerIds = [];
   for(const s of napoleon.soldiers){
     if(s.alive && !s.dying && s.role === 'column' && napoleon.workerIds.length < 4){
@@ -861,7 +919,7 @@ if(!bridge.intact){
       napoleon.workerIds.push(s.id);
     }
   }
-  addMessage('Napoleon must build a bridge! Attack the workers!', 3500);
+  addMessage('Bridge out! The Grande Armée halts to rebuild — attack the workers!', 3500);
   return;
 }
 }
@@ -882,15 +940,6 @@ wag.wobble += dt * 0.003;
 for(const s of napoleon.soldiers){
 if(!s.alive || s.dying) continue;
 s.walkTimer += dt;
-napoleon.food = Math.max(0, napoleon.food - dt * 0.000025);
-
-// Disease progression for already-diseased soldiers (~11s visible green walk before death)
-if(s.diseased && !s.dying){
-  s.sickness = Math.min(1, s.sickness + dt * 0.00009);
-  if(s.sickness >= 1){
-    s.dying = true; s.dyingMs = 2000; s.deathType = 'disease';
-  }
-}
 
 if(s.role === 'vanguard'){
   // Vanguard runs well ahead — but STOPS at broken bridges
@@ -932,6 +981,7 @@ if(s.role === 'vanguard'){
       const take = Math.min(dt * 0.015, nearFarm.food);
       nearFarm.food -= take;
       s.carryFood = Math.min(20, s.carryFood + take);
+      if(Math.random() < dt * 0.01) fxGrain(nearFarm, s);
       if(nearFarm.food <= 0 || s.carryFood >= 18){
         nearFarm.alive = nearFarm.food > 0;
         s.raidReturning = true;
@@ -976,6 +1026,8 @@ if(s.role === 'vanguard'){
       s.burntTarget = null;
       s.raidReturning = true;
       foodIndicators.push({text:'−', color:'#ee3333', life:1100, maxLife:1100, floatY:0});
+      fxText(s.x, s.y - 72, 'nothing left!', '#ff6a50');
+      hint('empty', 'His foragers come back empty-handed — there is nothing left to take.', 4000);
     }
   } else {
     // Return to army with food — laden, so noticeably slower
@@ -988,6 +1040,8 @@ if(s.role === 'vanguard'){
     if(Math.abs(s.x - napoleon.x) < 180){
       if(s.carrying){
         napoleon.food = Math.min(napoleon.maxFood, napoleon.food + s.carryFood);
+        fxText(s.x, s.y - 66, `+${Math.round(s.carryFood)} food`, '#f2d266');
+        hint('forage', 'His foragers bring back Russian grain. Burn the farms before they reach them!', 5000);
         s.carryFood = 0;
         s.carrying = false;
       }
@@ -1006,41 +1060,42 @@ if(s.role === 'vanguard'){
       const take = Math.min(dt * 0.004, farm.food);
       farm.food -= take;
       napoleon.food = Math.min(napoleon.maxFood, napoleon.food + take);
-      if(farm.food <= 0) farm.alive = false;
+      if(Math.random() < dt * 0.004) fxGrain(farm, s);
+      if(farm.food <= 0){ farm.alive = false; fxText(farm.x, farm.y - 64, 'stripped', '#e8c060'); }
     }
   }
 }
 }
 
-// Disease spreads from 25% of the march onward — accelerates as food drops
-// Historical: >50% of the Grande Armée died before reaching Moscow
-const marchProgress = napoleon.x / MOSCOW_X;
-const foodRatio = napoleon.food / napoleon.maxFood;
-if(marchProgress > 0.25){
-  // Base rate from march distance; starving amplifies heavily
-  const distFactor = Math.min(1, (marchProgress - 0.25) / 0.75); // 0→1 over remaining march
-  const starveFactor = Math.max(0, 1 - foodRatio * 2);            // 0 at 50%+ food, 1 at 0%
-  const sickRate = distFactor * 0.35 + starveFactor * 0.65;
-  const infChance = sickRate * 0.000024 * dt; // ~53 die, ~40 reach Moscow
-  for(const s of napoleon.soldiers){
-    if(s.alive && !s.dying && !s.diseased && Math.random() < infChance){
-      s.diseased = true;
-      s.sickness = 0.05; // starts at very faint green
-    }
-  }
-}
-
-// Starvation
-if(napoleon.food <= 0){
-napoleon.food = 0;
-for(const s of napoleon.soldiers){
-  if(s.alive && !s.dying && Math.random() < 0.000015 * dt){
-    s.dying = true; s.dyingMs = 1500; s.deathType = 'disease';
-  }
-}
-}
-
+updateArmyUpkeep(dt);
 updateDying(dt);
+}
+
+// Every soldier eats, and sickness runs its course, whether the army marches or waits at a river.
+// Disease spreads from 25% of the march onward (historically >50% died before Moscow); hunger multiplies it.
+function updateArmyUpkeep(dt){
+let n = 0;
+for(const s of napoleon.soldiers) if(s.alive && !s.dying) n++;
+napoleon.food = Math.max(0, napoleon.food - dt * FOOD_PER_SOLDIER * n);
+const marchProgress = napoleon.x / MOSCOW_X;
+const starveFactor = Math.max(0, 1 - (napoleon.food / napoleon.maxFood) * 2);   // 0 at 50%+ food, 1 at empty
+const distFactor = marchProgress > 0.25 ? Math.min(1, (marchProgress - 0.25) / 0.75) : 0;
+// Typhus and dysentery follow the march; hunger adds its own toll on top
+const infChance = (distFactor * 0.35 * 0.000024 + starveFactor * 0.0000025) * dt;
+const starveChance = napoleon.food <= 0 ? 0.000002 * dt : 0;
+if(hungerLevel() >= 2) hint('hungry', 'The Grande Armée is going hungry — and hunger breeds typhus.', 5000);
+for(const s of napoleon.soldiers){
+  if(!s.alive || s.dying) continue;
+  if(s.diseased){
+    // ~11s of visibly sickening before death
+    s.sickness = Math.min(1, s.sickness + dt * 0.00009);
+    if(s.sickness >= 1){ s.dying = true; s.dyingMs = 2000; s.deathType = 'disease'; continue; }
+  } else if(Math.random() < infChance){ s.diseased = true; s.sickness = 0.05; }
+  if(Math.random() < starveChance){
+    s.dying = true; s.dyingMs = 1500; s.deathType = 'starve';
+    hint('starve', 'Men are starving in the ranks.', 3000);
+  }
+}
 }
 
 function updateDying(dt){
@@ -1051,9 +1106,9 @@ if(s.dyingMs <= 0){
   if(s.deathType === 'freeze'){
     // Persist as blue frozen corpse on the ground
     s.frozenBody = true;
-  } else if(s.deathType === 'disease'){
+  } else if(s.deathType === 'disease' || s.deathType === 'starve'){
     // Spawn rising ghost
-    ghosts.push({ x: s.x, y: s.y, vy: 55, life: 2200, maxLife: 2200 });
+    ghosts.push({ x: s.x, y: s.y, vy: 55, life: 2200, maxLife: 2200, kind: s.deathType });
   }
   s.alive = false; s.dying = false;
 }
@@ -1147,16 +1202,18 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
       addMessage(`Bridge damaged! (${Math.max(0,b.hp)}/${b.maxHp})`, 1000);
       if(b.hp <= 0){
         b.intact = false;
+        russia.bridgesCut = (russia.bridgesCut || 0) + 1;
         fxBridgeBreak(b.x);
         if(russia.sharedBridgeTarget === b) russia.sharedBridgeTarget = null;
-        addMessage('Bridge destroyed! Napoleon must rebuild!', 3000);
+        if(hints.has('bridge')) addMessage('Bridge destroyed! Napoleon must rebuild!', 3000);
+        hint('bridge', 'Bridge destroyed! Every day he spends rebuilding it brings winter closer.', 5000);
       }
       break;
     }
   }
   // Attack farms / houses — 3 hits to destroy
   for(const farm of farms){
-    if(!farm.alive || farm.burning) continue;
+    if(!farmBurnable(farm)) continue;
     if(Math.abs(controlled.x - farm.x) < 55 && Math.abs(controlled.y - farm.y) < 58){
       farm.farmHp = Math.max(0, farm.farmHp - 1);
       fxHit({ x: farm.x - controlled.facing * 10, y: farm.y }, controlled.facing);
@@ -1165,7 +1222,8 @@ if((keys['Space']||keys['KeyZ']||touch.attack) && controlled.atkCd <= 0){
         fxIgnite(farm.x, farm.y);
         farm.burnTimer = 2500;
         russia.sharedFarmTarget = farm;
-        addMessage(farm.isHouse ? 'House burning!' : 'Farm burning! Scorched earth!', 2000);
+        if(hints.has('burn')) addMessage(farm.isHouse ? 'House burning!' : 'Farm burning! Scorched earth!', 2000);
+        hint('burn', 'Burned! His foragers will find nothing here — not now, and not on his way home.', 5000);
       } else {
         const label = farm.type === 'windmill' ? 'Windmill' : farm.isHouse ? 'House' : farm.type === 'barn' ? 'Barn' : farm.type === 'cottage' ? 'Cottage' : 'Farm';
         addMessage(`${label} hit! ${farm.farmHp} hit${farm.farmHp>1?'s':''} to burn.`, 900);
@@ -1300,6 +1358,20 @@ if(napoleon.retreating){
     f.x += (targetX - f.x) * 0.003;
   }
 } else {
+  // The column closes ranks: line infantry near an attacker turn and engage him together.
+  // (Why Russia avoided pitched battle — foragers and bridge-builders, alone, are another matter.)
+  if(nearR && nearD < 110 && (f.role === 'column' || f.role === 'vanguard')){
+    if(f.homeY === undefined) f.homeY = f.y;
+    if(nearD > 30){
+      f.x += (nearR.x - f.x) / nearD * 46 * (dt/1000);
+      f.y = Math.max(LANE_TOP+5, Math.min(LANE_BOT-5, f.y + (nearR.y - f.y) / nearD * 46 * (dt/1000)));
+    }
+    f.facing = nearR.x > f.x ? 1 : -1;
+  } else if(f.homeY !== undefined){
+    // Back into line once the threat is gone
+    f.y += (f.homeY - f.y) * Math.min(1, dt / 600);
+    if(Math.abs(f.homeY - f.y) < 0.5){ f.y = f.homeY; f.homeY = undefined; }
+  }
   if(nearR && nearD < 36 && f.atkCd <= 0){
     // French attacks Russian — identical to Russian attack: 34 dmg, 700ms cooldown, 3 hits to kill
     f.atkCd = f.atkCdMax;
@@ -1322,12 +1394,17 @@ for(const farm of farms){
 if(farm.burning){
 farm.burnTimer -= dt;
 farm.food = Math.max(0, farm.food - dt * 0.02);
-if(farm.burnTimer <= 0 || farm.food <= 0){
+if(farm.burnTimer <= 0){
 farm.alive = false;
 farm.burning = false;
 farm.burnt = true;
+farm.food = 0;
 if(russia.sharedFarmTarget === farm) russia.sharedFarmTarget = null;
 }
+} else if(!farm.burnt && farm.food < farm.maxFood){
+// Peasants return and the harvest comes in: a looted farm recovers, a burned one never does
+farm.food = Math.min(farm.maxFood, farm.food + farm.maxFood * dt / REGROW_MS);
+if(!farm.alive && farm.food >= 8){ farm.alive = true; farm.regrown = true; }
 }
 }
 }
@@ -1433,7 +1510,7 @@ function computeEnv(){
   const mapP = clamp01(napoleon.x / MAP_WIDTH);
   const advP = clamp01(napoleon.x / MOSCOW_X);
   const inRetreat = moscow.burned || phase === 'retreat' || phase === 'burned' || retreatTime > 0;
-  const rp = inRetreat ? clamp01(retreatTime / 120000) : 0;
+  const rp = inRetreat ? winterProgress() : 0;
   const T = inRetreat ? 1 + rp : advP;
   const e = sampleKeys(SEASON_KEYS, 't', T);
   const z = sampleKeys(ZONE_KEYS, 'p', mapP);
@@ -2566,19 +2643,31 @@ function drawFarm(farm){
     drawSmokeColumn(sx, fy - 46, 160, 16, 0.65, '#2a221c', farm.x * 0.03, 1.4);
     drawFire(sx, fy, 50, 64, k, farm.x * 0.01);
   }
-  // Food remaining and hits left to burn
-  if(farm.food > 0 && farm.alive && !farm.burning){
-    const pct = farm.food / farm.maxFood;
-    ctx.fillStyle = 'rgba(16,12,8,0.6)'; ctx.fillRect(sx - 17, fy - 71, 34, 6);
-    ctx.fillStyle = '#d2b04a'; ctx.fillRect(sx - 16, fy - 70, 32 * pct, 4);
-    ctx.fillStyle = 'rgba(255,240,180,0.45)'; ctx.fillRect(sx - 16, fy - 70, 32 * pct, 1);
+  // Food the French can still take from this farm (grain sheaf + bar; muted while a looted farm
+  // regrows), and the hits left before it burns
+  if(!farm.burning){
+    const pct = farm.food / farm.maxFood, regrowing = !farm.alive;
+    drawWheatIcon(sx - 20, fy - 68, regrowing ? 0.55 : 1);
+    ctx.fillStyle = 'rgba(16,12,8,0.65)'; ctx.fillRect(sx - 12, fy - 71, 31, 6);
+    ctx.fillStyle = regrowing ? 'rgba(160,150,90,0.85)' : '#dcb64a'; ctx.fillRect(sx - 11, fy - 70, 29 * pct, 4);
+    if(!regrowing){ ctx.fillStyle = 'rgba(255,240,180,0.5)'; ctx.fillRect(sx - 11, fy - 70, 29 * pct, 1); }
   }
-  if(farm.farmHp < 3 && farm.alive && !farm.burning){
+  if(farm.farmHp < 3 && farmBurnable(farm)){
     for(let h = 0; h < 3; h++){
       ctx.fillStyle = h < farm.farmHp ? '#e0482a' : 'rgba(40,24,20,0.8)';
       ctx.beginPath(); ctx.arc(sx - 7 + h * 7, fy - 78, 2.6, 0, TAU); ctx.fill();
     }
   }
+}
+// Sheaf of grain: marks a farm's food
+function drawWheatIcon(x, y, a){
+  ctx.globalAlpha = a;
+  ctx.fillStyle = 'rgba(16,12,8,0.65)'; ctx.beginPath(); ctx.arc(x, y - 1, 6.5, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#d8b450'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, y + 4); ctx.lineTo(x, y - 3); ctx.moveTo(x - 2.4, y + 4); ctx.lineTo(x - 1.2, y - 1.5); ctx.moveTo(x + 2.4, y + 4); ctx.lineTo(x + 1.2, y - 1.5); ctx.stroke();
+  ctx.fillStyle = '#f0d070';
+  for(const [ox, oy] of [[0, -4.6], [-1.5, -2.6], [1.5, -2.6], [0, -1.6]]){ ctx.beginPath(); ctx.ellipse(x + ox, y + oy, 1, 1.9, 0, 0, TAU); ctx.fill(); }
+  ctx.globalAlpha = 1;
 }
 // Carved, painted window frame (nalichnik) with shutters
 function drawIzbaWindow(x, y, P, broken){
@@ -2808,6 +2897,7 @@ function tintCol(c, tint){
   if(tint === 'flash') return mix(c, '#fffbf0', 0.82);
   if(tint === 'frost'){ const k = (col(c)[0] + col(c)[1] + col(c)[2]) / 765; return mix([40 + k * 170, 48 + k * 175, 58 + k * 180], '#7f9cc0', 0.42); }
   if(tint === 'dead') return shade(mix(c, '#6f8a52', 0.6), 0.75);
+  if(tint === 'pale') return shade(mix(c, '#b8ab98', 0.5), 0.8);
   const k = +tint.slice(1) / 4;  // sickness: drained, jaundiced green
   return shade(mix(c, '#7aa83a', k * 0.55), 1 - k * 0.22);
 }
@@ -2954,9 +3044,9 @@ function drawFrenchSoldier(s){
   }
   let tint = '', rot = 0, alpha = 1;
   if(s.dying){
-    const dur = s.deathType === 'freeze' ? 1500 : s.deathType === 'combat' ? 800 : 2000;
+    const dur = s.deathType === 'freeze' || s.deathType === 'starve' ? 1500 : s.deathType === 'combat' ? 800 : 2000;
     const k = clamp01(s.dyingMs / dur);
-    tint = s.deathType === 'freeze' ? 'frost' : s.deathType === 'disease' ? 'dead' : '';
+    tint = s.deathType === 'freeze' ? 'frost' : s.deathType === 'disease' ? 'dead' : s.deathType === 'starve' ? 'pale' : '';
     rot = dir * Math.min(Math.PI / 2, (1 - k) * Math.PI / 1.6);
     alpha = s.deathType === 'freeze' ? 1 : Math.min(1, k * 1.6);
   } else if(s.diseased && s.sickness > 0.05) tint = 's' + Math.min(4, 1 + (s.sickness * 4 | 0));
@@ -3308,15 +3398,15 @@ function drawHUD(){
   const foodPct = Math.max(0, napoleon.food / napoleon.maxFood);
   const bx = px + 12, by = 35, bw = 296, bh = 13;
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 3); ctx.fill();
-  const low = foodPct < 0.3, pulse = low ? 0.75 + 0.25 * Math.sin(gameTime * 0.008) : 1;
+  const hl = hungerLevel(), low = hl >= 2, pulse = low ? 0.75 + 0.25 * Math.sin(gameTime * 0.008) : 1;
   const fg = ctx.createLinearGradient(0, by, 0, by + bh);
-  fg.addColorStop(0, low ? '#f07050' : '#ecca62'); fg.addColorStop(1, low ? '#8a2418' : '#a8801e');
+  fg.addColorStop(0, ['#ecca62', '#e8a848', '#f07050', '#f05040'][hl]); fg.addColorStop(1, ['#a8801e', '#9a6418', '#8a2418', '#6a140c'][hl]);
   ctx.globalAlpha = pulse; ctx.fillStyle = fg;
   if(foodPct > 0){ ctx.beginPath(); ctx.roundRect(bx + 1, by + 1, Math.max(3, (bw - 2) * foodPct), bh - 2, 2); ctx.fill(); }
   ctx.globalAlpha = 1;
   ctx.fillStyle = 'rgba(0,0,0,0.3)'; for(let k = 1; k < 10; k++) ctx.fillRect(bx + bw * k / 10, by + 2, 1, bh - 4);
   ctx.strokeStyle = 'rgba(214,180,106,0.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(bx + 0.5, by + 0.5, bw - 1, bh - 1, 3); ctx.stroke();
-  hudText(`Provisions ${Math.floor(napoleon.food)}`, W / 2, by + 10, 'bold 9px Cinzel, serif', '#fff8e8', 'center');
+  hudText(`Provisions ${Math.floor(napoleon.food)} · ${HUNGER[hl]}`, W / 2, by + 10, 'bold 9px Cinzel, serif', hl >= 2 ? '#ffd8c8' : '#fff8e8', 'center');
   for(const ind of foodIndicators){
     ctx.globalAlpha = Math.min(1, ind.life / 280);
     hudText(ind.text, px + 326, 46 - ind.floatY, 'bold 16px Cinzel, serif', ind.color);
@@ -3336,9 +3426,11 @@ function drawHUD(){
   hudText(`${Math.round(temperature)}°C`, tx + 192, 33, 'bold 22px Cinzel, serif', tc, 'right');
   const place = placeName();
   hudText(`${getSeasonLabel()} · ${place}`, tx + 192, 50, '12px "IM Fell English", serif', PARCH, 'right');
+  if(daysLost >= 1) hudText(`+${Math.round(daysLost)} days lost`, tx + 30, 30, 'bold 10px Cinzel, serif', '#ff9a7a');
 
   drawDeployBox();
   drawProgressBar();
+  drawOffscreenHalt();
   drawMessages();
   if(napoleon.atMoscow && phase === 'playing') drawMoscowChoice();
 
@@ -3420,6 +3512,13 @@ function drawProgressBar(){
       ctx.beginPath(); ctx.moveTo(rxp - 3, mid - 3); ctx.lineTo(rxp + 3, mid + 3); ctx.moveTo(rxp + 3, mid - 3); ctx.lineTo(rxp - 3, mid + 3); ctx.stroke();
     }
   }
+  // Farms along the road: gold = food to forage, hollow = stripped (regrowing), dark cross = burned
+  for(const f of farms){
+    const fx2 = X(f.x), fy2 = mid + 6.5;
+    if(f.burnt || f.burning){ ctx.strokeStyle = 'rgba(40,24,14,0.85)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(fx2 - 1.6, fy2 - 1.6); ctx.lineTo(fx2 + 1.6, fy2 + 1.6); ctx.moveTo(fx2 + 1.6, fy2 - 1.6); ctx.lineTo(fx2 - 1.6, fy2 + 1.6); ctx.stroke(); }
+    else if(f.alive && f.food > 4){ ctx.fillStyle = '#c8961e'; ctx.beginPath(); ctx.arc(fx2, fy2, 0.9 + 1.5 * f.food / f.maxFood, 0, TAU); ctx.fill(); }
+    else { ctx.strokeStyle = 'rgba(150,110,40,0.7)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(fx2, fy2, 1.3, 0, TAU); ctx.stroke(); }
+  }
   // Moscow, then the Emperor's position
   ctx.fillStyle = moscow.burned ? '#d04a1c' : '#8a2a1a'; ctx.beginPath(); ctx.arc(rx, mid, 3, 0, TAU); ctx.fill();
   const nx = X(napoleon.x);
@@ -3478,32 +3577,37 @@ function drawMoscowChoice(){
   hudText('Napoleon wins', hold.x + 100, btnY + 40, 'italic 12px "IM Fell English", serif', 'rgba(180,230,180,0.85)', 'center');
 }
 
-function getSeasonLabel(){
-const progress = napoleon.x / MOSCOW_X;
-if(phase==='retreat'){
-const rp = retreatTime / 120000;
-if(rp < 0.2) return 'October 1812';
-if(rp < 0.5) return 'November 1812';
-return 'December 1812';
-}
-if(progress < 0.15) return 'June 1812';
-if(progress < 0.35) return 'July 1812';
-if(progress < 0.55) return 'August 1812';
-if(progress < 0.75) return 'September 1812';
-return 'September 1812';
-}
+function getSeasonLabel(){ return dateLabel(campaignDay()); }
 
 // -- BRIDGE BUILDING INDICATOR --
 function drawBridgeBuildIndicator(){
   if(!napoleon.buildingBridge) return;
   const b = bridges.find(b => !b.intact && Math.abs(b.x - napoleon.x) < 110);
-  const sx = (b ? b.x : napoleon.x) - camera.x, y = ROAD_TOP - 46;
+  const sx = (b ? b.x : napoleon.x) - camera.x, y = ROAD_TOP - 54;
   const pct = clamp01(napoleon.bridgeBuildTime / napoleon.bridgeBuildMax);
-  ctx.fillStyle = 'rgba(14,11,9,0.75)'; ctx.beginPath(); ctx.roundRect(sx - 64, y - 12, 128, 24, 4); ctx.fill();
-  ctx.strokeStyle = 'rgba(214,180,106,0.7)'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx - 56, y + 3, 112, 5);
-  ctx.fillStyle = '#d8b050'; ctx.fillRect(sx - 56, y + 3, 112 * pct, 5);
-  hudText('Sappers bridging the river…', sx, y - 1, 'italic 11px "IM Fell English", serif', PARCH, 'center');
+  const days = Math.max(0, daysLost - (napoleon.bridgeDaysStart || 0));
+  ctx.fillStyle = 'rgba(14,11,9,0.8)'; ctx.beginPath(); ctx.roundRect(sx - 86, y - 20, 172, 42, 5); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,154,122,0.75)'; ctx.lineWidth = 1; ctx.stroke();
+  hudText(`Bridge out · +${Math.floor(days)} days`, sx, y - 3, 'bold 13px Cinzel, serif', '#ffae8e', 'center');
+  hudText('his army waits at the river — and eats', sx, y + 11, 'italic 11px "IM Fell English", serif', PARCH, 'center');
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx - 78, y + 15, 156, 3);
+  ctx.fillStyle = '#d8b050'; ctx.fillRect(sx - 78, y + 15, 156 * pct, 3);
+}
+
+// Napoleon held up at a broken bridge somewhere off-screen: say where, and what it costs him
+function drawOffscreenHalt(){
+  if(!napoleon.buildingBridge) return;
+  const bi = bridges.findIndex(b => !b.intact && Math.abs(b.x - napoleon.x) < 110);
+  const bx = (bi >= 0 ? bridges[bi].x : napoleon.x) - camera.x;
+  if(bx > 60 && bx < W - 60) return;
+  const left = bx < 0, days = Math.floor(Math.max(0, daysLost - (napoleon.bridgeDaysStart || 0)));
+  const text = `${left ? '◀  ' : ''}Napoleon halted at the ${bi >= 0 ? RIVER_NAMES[bi] : 'river'} · +${days} days${left ? '' : '  ▶'}`;
+  ctx.font = 'bold 11px Cinzel, serif';
+  const tw = ctx.measureText(text).width + 24, y = 300, x = left ? 10 : W - 10 - tw;
+  const pulse = 0.7 + 0.3 * Math.sin(gameTime * 0.006);
+  ctx.fillStyle = 'rgba(14,11,9,0.82)'; ctx.beginPath(); ctx.roundRect(x, y - 15, tw, 25, 5); ctx.fill();
+  ctx.strokeStyle = `rgba(255,154,122,${pulse})`; ctx.lineWidth = 1.2; ctx.stroke();
+  hudText(text, x + 12, y + 2, 'bold 11px Cinzel, serif', '#ffb898');
 }
 
 // -- TITLE SCREEN --
@@ -3591,10 +3695,11 @@ function drawTitle(){
   ctx.beginPath(); ctx.moveTo(W / 2, H / 2 - 86); ctx.lineTo(W / 2 + 6, H / 2 - 80); ctx.lineTo(W / 2, H / 2 - 74); ctx.lineTo(W / 2 - 6, H / 2 - 80); ctx.fill();
   hudText('The Retreat Will Teach Them', W / 2, H / 2 - 52, 'italic 21px "IM Fell English", serif', '#d8c49a', 'center');
   const body = 'rgba(232,224,206,0.9)';
-  hudText('You are Russia. Napoleon marches on Moscow with 100,000 men.', W / 2, H / 2 - 16, '15px "IM Fell English", serif', body, 'center');
-  hudText('Deploy soldiers. Burn farms. Destroy bridges.', W / 2, H / 2 + 7, '15px "IM Fell English", serif', body, 'center');
-  hudText('Let General Winter finish what your army cannot.', W / 2, H / 2 + 30, '15px "IM Fell English", serif', body, 'center');
-  hudText('Use + to add soldiers, then Send into Battle  ·  WASD to move  ·  SPACE to attack', W / 2, H / 2 + 60, '12px "IM Fell English", serif', 'rgba(200,192,176,0.7)', 'center');
+  hudText('You are Russia. Napoleon marches on Moscow with 100,000 men.', W / 2, H / 2 - 20, '15px "IM Fell English", serif', body, 'center');
+  hudText('His army lives off your farms — burn them, and it starves.', W / 2, H / 2 + 1, '15px "IM Fell English", serif', body, 'center');
+  hudText('Break his bridges — every day he loses brings winter closer.', W / 2, H / 2 + 22, '15px "IM Fell English", serif', body, 'center');
+  hudText('Let General Winter finish what your army cannot.', W / 2, H / 2 + 43, 'italic 15px "IM Fell English", serif', '#e0cc9a', 'center');
+  hudText('Use + to add soldiers, then Send into Battle  ·  WASD to move  ·  SPACE to attack', W / 2, H / 2 + 66, '12px "IM Fell English", serif', 'rgba(200,192,176,0.7)', 'center');
   const btn = { x: W / 2 - 120, y: H / 2 + 80, w: 240, h: 50 };
   const hot = mouse.x >= btn.x && mouse.x <= btn.x + btn.w && mouse.y >= btn.y && mouse.y <= btn.y + btn.h;
   drawGlow('#d4a446', W / 2, btn.y + 25, 150, 0.12 + (hot ? 0.18 : 0.06 * (1 + Math.sin(t * 0.003))));
@@ -3609,12 +3714,12 @@ function drawMinardChart(x, y, w, h){
   ctx.strokeStyle = 'rgba(80,60,36,0.7)'; ctx.lineWidth = 1; ctx.strokeRect(x + 3.5, y + 3.5, w - 7, h - 7);
   const lx = x + 30, rx = x + w - 30;
   const X = wx => lx + clamp01(wx / MOSCOW_X) * (rx - lx);
-  const advY = y + 40, retY = y + 64, k = 0.4;
+  const advY = y + h * 0.3, retY = y + h * 0.47, k = h / 420;
   ctx.font = 'italic 10px "IM Fell English", serif'; ctx.textAlign = 'center';
   for(let i = 0; i < rivers.length; i++){
     const rxp = X(rivers[i].x);
-    ctx.strokeStyle = 'rgba(70,110,160,0.45)'; ctx.beginPath(); ctx.moveTo(rxp, y + 10); ctx.quadraticCurveTo(rxp + 6, y + 50, rxp - 2, y + 92); ctx.stroke();
-    ctx.fillStyle = 'rgba(60,80,110,0.8)'; ctx.fillText(RIVER_NAMES[i], rxp, y + 102);
+    ctx.strokeStyle = 'rgba(70,110,160,0.45)'; ctx.beginPath(); ctx.moveTo(rxp, y + 18); ctx.quadraticCurveTo(rxp + 6, y + h * 0.4, rxp - 2, y + h * 0.6); ctx.stroke();
+    ctx.fillStyle = 'rgba(60,80,110,0.8)'; ctx.fillText(RIVER_NAMES[i], rxp, y + h * 0.6 + 10);
   }
   const band = (log, cy, fill, edge) => {
     if(log.length < 2) return;
@@ -3626,7 +3731,6 @@ function drawMinardChart(x, y, w, h){
   };
   band(campaignLog.adv, advY, '#d9b679', 'rgba(110,80,40,0.9)');
   band(campaignLog.ret, retY, '#18140f', null);
-  // Towns and the head-counts at the key moments
   ctx.fillStyle = 'rgba(40,28,16,0.9)'; ctx.font = '11px "IM Fell English", serif';
   for(const [t, n] of PLACES) if(t > 0.05) ctx.fillText(n, X(t * MOSCOW_X), y + 15);
   ctx.textAlign = 'left'; ctx.fillText('Niemen', x + 8, y + 15);
@@ -3635,9 +3739,9 @@ function drawMinardChart(x, y, w, h){
   if(adv.length){ ctx.fillStyle = '#7a5428'; ctx.fillText(`${adv[0].n}`, lx - 22, advY + 4); ctx.textAlign = 'right'; ctx.fillText(`${adv[adv.length - 1].n}`, rx + 24, advY + 4); }
   if(ret.length){ ctx.fillStyle = '#18140f'; ctx.textAlign = 'center'; const last = ret[ret.length - 1]; ctx.fillText(`${last.n}`, X(last.x), retY + last.n * k / 2 + 13); }
   // Temperature of the retreat
-  const ty0 = y + 112, ty1 = y + h - 12, T = tc => ty0 + clamp01(-tc / 35) * (ty1 - ty0);
+  const ty0 = y + h * 0.7, ty1 = y + h - 10, T = tc => ty0 + clamp01(-tc / 35) * (ty1 - ty0);
   ctx.strokeStyle = 'rgba(80,60,36,0.25)'; ctx.lineWidth = 0.6; ctx.textAlign = 'left'; ctx.font = '9px "IM Fell English", serif'; ctx.fillStyle = 'rgba(60,44,28,0.75)';
-  for(const tc of [0, -10, -20, -30]){ ctx.beginPath(); ctx.moveTo(lx, T(tc)); ctx.lineTo(rx, T(tc)); ctx.stroke(); ctx.fillText(`${tc}°`, rx + 4, T(tc) + 3); }
+  for(const tc of [0, -15, -30]){ ctx.beginPath(); ctx.moveTo(lx, T(tc)); ctx.lineTo(rx, T(tc)); ctx.stroke(); ctx.fillText(`${tc}°`, rx + 4, T(tc) + 3); }
   if(ret.length > 1){
     ctx.strokeStyle = '#18140f'; ctx.lineWidth = 1.2; ctx.beginPath();
     ret.forEach((p, i) => i ? ctx.lineTo(X(p.x), T(p.t)) : ctx.moveTo(X(p.x), T(p.t))); ctx.stroke();
@@ -3649,37 +3753,94 @@ function drawMinardChart(x, y, w, h){
   ctx.fillText('after C. J. Minard, 1869 — your campaign', x + w - 8, y + h - 3);
 }
 
+// How Napoleon's soldiers died, by cause
+function deathTally(){
+  const t = { combat: 0, disease: 0, starve: 0, freeze: 0 };
+  for(const s of napoleon.soldiers){
+    if(s.alive) continue;
+    const k = s.frozenBody || s.deathType === 'freeze' ? 'freeze' : s.deathType;
+    if(t[k] !== undefined) t[k]++;
+  }
+  return t;
+}
+const DEATH_KEYS = [['combat', 'Battle', '#c0442e'], ['disease', 'Typhus', '#7a9a44'], ['starve', 'Hunger', '#b08a4e'], ['freeze', 'Cold', '#8ab4e0']];
+// Ending tier by the men who make it home
+function endingFor(n){
+  if(n <= 0) return { title: 'The Grande Armée Is Destroyed', color: '#e2be6a', line: 'Not one of Napoleon\'s 100,000 men makes it back across the Niemen.' };
+  if(n <= 7) return { title: 'Russia Endures', color: '#e2be6a', line: `Only ${n} of 100,000 soldiers stumble back across the Niemen.` };
+  if(n <= 19) return { title: 'A Costly Victory', color: '#d8b070', line: `${n} of his 100,000 escape across the Niemen — enough to rebuild an army.` };
+  return { title: 'Napoleon Escapes', color: '#c8a8a0', line: `${n} of his 100,000 march home across the Niemen. He will be back.` };
+}
+// What the player did, and what it did to the Grande Armée
+function campaignLessons(n, tally){
+  const burnt = farms.filter(f => f.burnt).length, total = farms.length;
+  const ruLost = russia.deployed.filter(s => !s.alive).length;
+  const lines = [];
+  lines.push(burnt / total < 0.35
+    ? 'The farms you spared fed his march — and fed him again on the way home.'
+    : `You burned ${burnt} of ${total} farms: hunger, and the typhus it bred, did the killing.`);
+  lines.push(daysLost < 6
+    ? 'His bridges stood, so he marched fast and outran the worst of the winter.'
+    : `Broken bridges cost him ${Math.round(daysLost)} days — winter caught his army on the open road.`);
+  if(tally.combat > (tally.disease + tally.starve + tally.freeze) * 0.4)
+    lines.push(`Battle killed ${tally.combat} of his men — and ${ruLost} of yours. Russia could not afford to fight that way.`);
+  else lines.push(n <= 7
+    ? 'It was not your army that defeated Napoleon. It was the land itself.'
+    : 'Russia\'s real weapons were hunger, distance and winter — use them all.');
+  return lines;
+}
+
 function drawEndScreen(){
   ctx.textAlign = 'center';
   if(phase === 'burned'){
     ctx.fillStyle = 'rgba(10,4,2,0.45)'; ctx.fillRect(0, 0, W, H);
-    hudPanel(W / 2 - 250, H / 2 - 118, 500, 230, '#e07a3a');
-    hudText('Moscow Burns', W / 2, H / 2 - 72, 'bold 30px Cinzel, serif', '#f08a4a', 'center');
-    ctx.fillStyle = 'rgba(224,122,58,0.6)'; ctx.fillRect(W / 2 - 120, H / 2 - 60, 240, 1);
-    hudText('The flames consume everything. Napoleon has nothing.', W / 2, H / 2 - 34, '16px "IM Fell English", serif', PARCH, 'center');
-    hudText('No shelter. No food. Winter is coming.', W / 2, H / 2 - 12, '16px "IM Fell English", serif', PARCH, 'center');
-    hudText('He has no choice but to march 100 leagues back through the snow.', W / 2, H / 2 + 10, '16px "IM Fell English", serif', PARCH, 'center');
+    hudPanel(W / 2 - 260, H / 2 - 124, 520, 240, '#e07a3a');
+    hudText('Moscow Burns', W / 2, H / 2 - 80, 'bold 30px Cinzel, serif', '#f08a4a', 'center');
+    ctx.fillStyle = 'rgba(224,122,58,0.6)'; ctx.fillRect(W / 2 - 120, H / 2 - 68, 240, 1);
+    hudText('The flames consume everything. No shelter, no stores.', W / 2, H / 2 - 44, '16px "IM Fell English", serif', PARCH, 'center');
+    hudText('He waits five weeks for a surrender that never comes,', W / 2, H / 2 - 22, '16px "IM Fell English", serif', PARCH, 'center');
+    const leave = dateLabel(RETREAT_DAY + daysLost);
+    hudText(`then turns for home on ${leave}${daysLost >= 6 ? ` — ${Math.round(daysLost)} days late` : ''}.`, W / 2, H / 2, '16px "IM Fell English", serif', daysLost >= 6 ? '#ffc0a0' : PARCH, 'center');
+    hudText(`Provisions: ${Math.floor(napoleon.food)} · ${HUNGER[hungerLevel()]}`, W / 2, H / 2 + 24, 'italic 14px "IM Fell English", serif', 'rgba(239,228,200,0.8)', 'center');
     hudButton({ x: W / 2 - 100, y: H / 2 + 50, w: 200, h: 45 }, 'The Retreat Begins', true, '#2a4a6a', 'bold 16px Cinzel, serif');
     return;
   }
-  ctx.fillStyle = phase === 'gameover_win' ? 'rgba(8,8,12,0.84)' : 'rgba(10,6,6,0.72)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = phase === 'gameover_win' ? 'rgba(8,8,12,0.86)' : 'rgba(10,6,6,0.72)'; ctx.fillRect(0, 0, W, H);
   ctx.drawImage(vignetteCanvas, 0, 0, W, H);
   if(phase === 'gameover_win'){
-    const aliveF = napoleon.soldiers.filter(s => s.alive && !s.dying).length;
-    hudText('Russia Endures', W / 2, 50, 'bold 32px Cinzel, serif', '#e2be6a', 'center');
-    hudText(aliveF <= 0 ? 'The Grande Armée has been annihilated.' : `Only ${aliveF} of 100,000 soldiers stumble back across the Niemen.`, W / 2, 76, '16px "IM Fell English", serif', PARCH, 'center');
-    drawMinardChart(W / 2 - 330, 88, 660, 168);
-    hudText(`You deployed ${russia.totalDeployed} Russian soldiers.`, W / 2, 276, '15px "IM Fell English", serif', 'rgba(239,228,200,0.85)', 'center');
-    const it = 'italic 14px "IM Fell English", serif', ic = 'rgba(200,190,170,0.85)';
-    hudText('It was not your army that defeated Napoleon.', W / 2, 298, it, ic, 'center');
-    hudText('It was the land itself — the burned fields, the broken bridges, the frozen roads.', W / 2, 317, it, ic, 'center');
-    hudText('The system was unwinnable. Napoleon just hadn\'t realized it yet.', W / 2, 336, it, ic, 'center');
-    hudButton({ x: W / 2 - 100, y: H / 2 + 66, w: 200, h: 42 }, 'Play Again', true, '#2c522c', 'bold 16px Cinzel, serif');
+    const n = napoleon.soldiers.filter(s => s.alive && !s.dying).length;
+    const end = endingFor(n), tally = deathTally();
+    hudText(end.title, W / 2, 40, 'bold 30px Cinzel, serif', end.color, 'center');
+    hudText(end.line, W / 2, 63, '15px "IM Fell English", serif', PARCH, 'center');
+    const cx = W / 2 - 330, cw = 660;
+    drawMinardChart(cx, 74, cw, 132);
+    // How the Grande Armée was lost
+    hudText('HOW THE GRANDE ARMÉE WAS LOST', cx, 223, 'bold 10px Cinzel, serif', 'rgba(214,180,106,0.9)');
+    let bx = cx;
+    const segs = DEATH_KEYS.map(([k, label, c]) => [label, tally[k], c]).concat([['Escaped', n, '#e8e2d4']]);
+    const total = segs.reduce((a, sg) => a + sg[1], 0) || 1;
+    for(const [, v, c] of segs){ const w = cw * v / total; if(w <= 0) continue; ctx.fillStyle = c; ctx.fillRect(bx, 229, w, 13); bx += w; }
+    ctx.strokeStyle = 'rgba(214,180,106,0.6)'; ctx.lineWidth = 1; ctx.strokeRect(cx + 0.5, 229.5, cw - 1, 13);
+    let lx = cx;
+    ctx.font = '12px "IM Fell English", serif';
+    for(const [label, v, c] of segs){
+      const t = `${label} ${v}`;
+      ctx.fillStyle = c; ctx.fillRect(lx, 249, 9, 9);
+      hudText(t, lx + 13, 258, '12px "IM Fell English", serif', PARCH);
+      lx += ctx.measureText(t).width + 34;
+    }
+    const burnt = farms.filter(f => f.burnt).length;
+    const ruLost = russia.deployed.filter(s => !s.alive).length;
+    hudText(`Your campaign: ${burnt} of ${farms.length} farms burned · ${russia.bridgesCut || 0} bridges broken · ${Math.round(daysLost)} days lost · ${ruLost} Russian soldiers fallen`,
+      W / 2, 282, '13px "IM Fell English", serif', 'rgba(239,228,200,0.9)', 'center');
+    const lessons = campaignLessons(n, tally);
+    lessons.forEach((t, i) => hudText(t, W / 2, 303 + i * 17, 'italic 14px "IM Fell English", serif', i === lessons.length - 1 ? '#e8d4a0' : 'rgba(210,200,180,0.9)', 'center'));
+    hudButton({ x: W / 2 - 100, y: H / 2 + 68, w: 200, h: 40 }, 'Play Again', true, '#2c522c', 'bold 16px Cinzel, serif');
   } else if(phase === 'napoleon_wins'){
     hudPanel(W / 2 - 280, H / 2 - 120, 560, 240, '#9fb4f0');
     hudText('Napoleon Triumphant', W / 2, H / 2 - 66, 'bold 30px Cinzel, serif', '#bccbff', 'center');
     ctx.fillStyle = 'rgba(159,180,240,0.6)'; ctx.fillRect(W / 2 - 130, H / 2 - 54, 260, 1);
-    hudText('Moscow is his. Without scorched earth, he resupplies and holds the city.', W / 2, H / 2 - 24, '15px "IM Fell English", serif', PARCH, 'center');
+    hudText('Moscow is his. With its stores and shelter, the Grande Armée winters in comfort.', W / 2, H / 2 - 24, '15px "IM Fell English", serif', PARCH, 'center');
     hudText('History teaches: the only winning move was to burn it all.', W / 2, H / 2, 'italic 15px "IM Fell English", serif', 'rgba(239,228,200,0.85)', 'center');
     hudButton({ x: W / 2 - 100, y: H / 2 + 66, w: 200, h: 42 }, 'Try Again', true, '#5a2626', 'bold 16px Cinzel, serif');
   }
@@ -3758,6 +3919,13 @@ function fxShot(shooter, dir){
   addFx({ type:'flash', x, y, life: 90 });
   for(let i = 0; i < 3; i++) addFx({ type:'smoke', x: x + dir * i * 5, y: y + rand(-3, 3), vx: dir * rand(14, 30), vy: rand(-8, -2), r: 4 + i * 2, grow: 16, life: rand(1200, 1900), c:'#e6e2da', a: 0.5 });
 }
+// A word floating up from the battlefield (food hauled, nothing found, days lost)
+function fxText(x, y, text, color){ addFx({ type:'text', x, y, vy: -18, text, c: color, life: 1700 }); }
+// Grain flying from a farm into a forager's arms
+function fxGrain(farm, s){
+  const dx = s.x - farm.x, dy = (s.y - 22) - (farm.y - 18);
+  addFx({ type:'grain', x: farm.x + rand(-10, 10), y: farm.y - 18 + rand(-6, 6), vx: dx * 1.6 + rand(-15, 15), vy: dy * 1.6 - 30, life: 600 });
+}
 function fxIgnite(x, y){
   addShake(3);
   for(let i = 0; i < 14; i++) addFx({ type:'ember', x: x + rand(-20, 20), y: y - rand(10, 40), vx: rand(-50, 50), vy: rand(-140, -50), life: rand(700, 1600) });
@@ -3821,6 +3989,8 @@ function updateFx(dt){
       case 'spark': p.vy += 420 * s; p.x += p.vx * s; p.y += p.vy * s; break;
       case 'splinter': if(p.y < p.floor){ p.vy += 500 * s; p.x += p.vx * s; p.y += p.vy * s; p.rot += p.vr * s; } break;
       case 'smoke': case 'dust': p.vx += (wind * 0.35 - p.vx) * s * 0.5; p.x += p.vx * s; p.y += p.vy * s; p.r += p.grow * s; break;
+      case 'text': p.y += p.vy * s; break;
+      case 'grain': p.vy += 90 * s; p.x += p.vx * s; p.y += p.vy * s; break;
       case 'ash': case 'leaf': p.vx += (wind * 0.8 - p.vx) * s * 0.6; p.x += (p.vx + Math.sin(p.life * 0.002 + p.rot) * 12) * s; p.y += p.vy * s; p.rot += (p.vr || 1.5) * s; break;
     }
   }
@@ -3852,6 +4022,14 @@ function drawParticles(){
       case 'leaf':
         ctx.save(); ctx.translate(x, y); ctx.rotate(p.rot); ctx.scale(1, Math.abs(Math.sin(p.rot * 1.7)) * 0.8 + 0.2);
         ctx.fillStyle = p.c; ctx.beginPath(); ctx.ellipse(0, 0, 3.2, 1.8, 0, 0, TAU); ctx.fill(); ctx.restore(); break;
+      case 'grain':
+        ctx.fillStyle = `rgba(236,200,96,${Math.min(1, k * 2)})`; ctx.fillRect(x - 1.2, y - 1.2, 2.4, 2.4); break;
+      case 'text':
+        ctx.globalAlpha = Math.min(1, k * 2.5);
+        ctx.font = 'bold 13px Cinzel, serif'; ctx.textAlign = 'center';
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,10,6,0.85)'; ctx.strokeText(p.text, x, y);
+        ctx.fillStyle = p.c; ctx.fillText(p.text, x, y);
+        ctx.globalAlpha = 1; break;
     }
   }
 }
@@ -3864,11 +4042,12 @@ function drawGhosts(){
     const k = Math.max(0, g.life / g.maxLife), rise = 1 - k;
     const a = Math.min(1, k * 1.4) * Math.min(1, rise * 6) * 0.7;
     const sway = Math.sin(gameTime * 0.004 + g.x) * 4 * rise;
+    const starved = g.kind === 'starve';
     for(let j = 0; j < 5; j++){
       const u = j / 4;
-      drawPuff('#d4ecd0', sx + sway * (1 - u) + Math.sin(gameTime * 0.006 + j) * 1.5, g.y - 20 - u * 18, 9 - u * 3.5 + rise * 4, a * (0.45 + u * 0.4));
+      drawPuff(starved ? '#e2dacb' : '#d4ecd0', sx + sway * (1 - u) + Math.sin(gameTime * 0.006 + j) * 1.5, g.y - 20 - u * 18, 9 - u * 3.5 + rise * 4, a * (0.45 + u * 0.4));
     }
-    drawGlow('#b8f0c8', sx + sway * 0.2, g.y - 36, 22, a * 0.35);
+    drawGlow(starved ? '#e8dcc0' : '#b8f0c8', sx + sway * 0.2, g.y - 36, 22, a * 0.35);
     ctx.fillStyle = `rgba(30,50,40,${a * 0.55})`;
     ctx.fillRect(sx + sway * 0.2 - 2.5, g.y - 40, 1.6, 1.6); ctx.fillRect(sx + sway * 0.2 + 1.5, g.y - 40, 1.6, 1.6);
   }
@@ -3877,7 +4056,7 @@ function drawGhosts(){
 // -- WEATHER --
 // Layered snow: z is depth (far flakes small and slow, near flakes large and fast)
 function spawnAndUpdateSnow(dt){
-  const rp = Math.min(1, retreatTime / 120000);
+  const rp = winterProgress();
   const w = env ? env.wind : -40;
   const rate = (0.012 + rp * 0.26) * dt;
   const n = Math.floor(rate) + (Math.random() < rate % 1 ? 1 : 0);
